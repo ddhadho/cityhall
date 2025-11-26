@@ -10,3 +10,4 @@ pub mod reader;
 
 pub use writer::SsTableWriter;
 pub use reader::SsTableReader; 
+pub use format::DEFAULT_BLOCK_SIZE; 
