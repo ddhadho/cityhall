@@ -18,6 +18,7 @@ use crate::sstable::{SsTableReader, SsTableWriter, DEFAULT_BLOCK_SIZE};
 use std::path::{Path, PathBuf};
 use std::collections::BinaryHeap;
 use std::cmp::Ordering;
+use std::time::Instant;
 
 /// Entry from an SSTable with source tracking
 #[derive(Debug, Clone)]
@@ -46,10 +47,10 @@ impl PartialOrd for CompactionEntry {
 
 impl Ord for CompactionEntry {
     fn cmp(&self, other: &Self) -> Ordering {
-        // Reverse ordering for min-heap
+        // Reverse ordering for min-heap (BinaryHeap is max-heap by default)
         other.key.cmp(&self.key)
-            // If keys equal, prefer NEWER timestamp (higher = more recent)
-            .then(self.timestamp.cmp(&other.timestamp))
+            // If keys equal, prefer NEWER timestamp (REVERSE so newer comes first)
+            .then(other.timestamp.cmp(&self.timestamp))  // Note: other.cmp(self), not self.cmp(other)
     }
 }
 

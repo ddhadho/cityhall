@@ -1,7 +1,7 @@
 [package]
-name = "timeseries-lsm"
+name = "cityhall"
 version = "0.1.0"
-edition = "2024"
+edition = "2021"
 
 [dependencies]
 bytes = "1.5"
@@ -10,9 +10,12 @@ crossbeam = "0.8"
 parking_lot = "0.12"
 snap = "1.1"
 thiserror = "2.0.17"
-probabilistic-collections = "0.7" 
+probabilistic-collections = "0.7"
 bincode = "1.3"
 crossbeam-channel = "0.5.15"
+fastrand = "2.0"
+once_cell = "1.19"
+clap = { version = "4.0", features = ["derive", "string"] }
 
 [dev-dependencies]
 tempfile = "3.23.0"
@@ -24,3 +27,5 @@ serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
 chrono = "0.4"
 
+once_cell = "1.19"
+fastrand = "2.0"

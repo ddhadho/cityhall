@@ -23,6 +23,7 @@ use crate::sstable::bloom::BloomFilter;
 /// - Data blocks: read on-demand
 pub struct SsTableReader {
     file: File,
+    file_size: u64,  
     path: PathBuf,
     index: Vec<IndexEntry>,
     bloom_filter: BloomFilter,
@@ -36,6 +37,7 @@ impl SsTableReader {
     /// but reads data blocks on-demand during get/scan operations
     pub fn open(path: PathBuf) -> Result<Self> {
         let mut file = File::open(&path)?;
+        let file_size = file.metadata()?.len(); 
         
         // 1. Read and validate header
         let header = Self::read_header(&mut file)?;
@@ -51,12 +53,17 @@ impl SsTableReader {
         
         Ok(Self {
             file,
+            file_size,
             path,
             index,
             bloom_filter,
             header,
         })
     }
+
+        pub fn file_size(&self) -> u64 {  // ADD THIS METHOD
+            self.file_size
+        }
     
     /// Get a value by key
     /// 
@@ -123,7 +130,7 @@ impl SsTableReader {
         
         Ok(results)
     }
-    
+
     // === Helper Methods ===
     
     /// Read header from file

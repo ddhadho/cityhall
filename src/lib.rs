@@ -4,6 +4,7 @@ pub mod memtable;
 pub mod storage_engine;
 pub mod sstable;
 pub mod compaction;
+pub mod metrics;
 
 pub use error::{Result, StorageError};
 pub use wal::Wal;

@@ -1,4 +1,4 @@
-use timeseries_lsm::{StorageEngine, Result};
+use cityhall::{StorageEngine, Result};
 use tempfile::TempDir;
 use std::time::Instant;
 

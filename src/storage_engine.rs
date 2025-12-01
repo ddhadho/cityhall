@@ -1,5 +1,6 @@
 use crate::{Entry, Result, Wal, MemTable, StorageError};
 use crate::sstable::{SsTableWriter, SsTableReader};
+use crate::metrics::metrics;
 use crate::compaction::{compact_sstables, select_sstables_for_compaction, CompactionStats};
 use std::path::PathBuf;
 use std::time::{SystemTime, Instant, Duration};
@@ -155,16 +156,33 @@ impl StorageEngine {
     }
 
     fn flush_memtable_to_disk(memtable: MemTable, path: &PathBuf) -> Result<()> {
+        let start = Instant::now();
+        
         if memtable.is_empty() { return Ok(()); }
         let mut writer = SsTableWriter::new(path.clone(), DEFAULT_BLOCK_SIZE)?;
         for (key, value, timestamp) in memtable.entries_with_timestamps() {
             writer.add(&key, &value, timestamp)?;
         }
         writer.finish()?;
+        
+        // Track flush
+        metrics().flushes_total.inc();
+        metrics().flush_duration.observe(start.elapsed());
+        metrics().sstable_count.inc();
+        
+        // Note: disk usage updated by caller
+        
         Ok(())
     }
 
     pub fn put(&mut self, key: Vec<u8>, value: Vec<u8>) -> Result<()> {
+        let start = Instant::now();
+
+        // Increment write counters
+        metrics().writes_total.inc();
+        metrics().writes_bytes.add((key.len() + value.len()) as u64);
+
+        // Existing logic
         let timestamp = SystemTime::now().duration_since(SystemTime::UNIX_EPOCH)?.as_secs();
         let entry = Entry { key: key.clone(), value: value.clone(), timestamp };
         self.wal.append(&entry)?;
@@ -178,6 +196,14 @@ impl StorageEngine {
                 self.flush_memtable_sync()?;
             }
         }
+
+        // Update memtable metrics
+        metrics().memtable_size_bytes.set(self.memtable.size_bytes() as u64);
+        metrics().memtable_entries.set(self.memtable.len() as u64);
+
+        // Record latency
+        metrics().write_latency.observe(start.elapsed());
+
         Ok(())
     }
 
@@ -216,6 +242,7 @@ impl StorageEngine {
                 let reader = SsTableReader::open(result.path)?;
                 self.sstables.push(reader);
                 self.immutable_memtable = None;
+                self.update_disk_usage();
             }
         }
         Ok(())
@@ -228,17 +255,56 @@ impl StorageEngine {
         let memtable_to_flush = std::mem::replace(&mut self.memtable, MemTable::new(self.memtable_max_size));
         Self::flush_memtable_to_disk(memtable_to_flush, &sstable_path)?;
         self.sstables.push(SsTableReader::open(sstable_path)?);
+        self.update_disk_usage();
         Ok(())
     }
 
-    pub fn get(&mut self, key: &[u8]) -> Result<Option<Vec<u8>>> {
-        if let Some(v) = self.memtable.get(key) { return Ok(Some(v)); }
-        if let Some(ref imm) = self.immutable_memtable {
-            if let Some(v) = imm.get(key) { return Ok(Some(v)); }
+    pub fn get(&mut self, key: &[u8]) -> Result<Option<Vec<u8>>> {  // Note: &mut self
+        let start = Instant::now();
+
+        // Track total read operation
+        metrics().reads_total.inc();
+
+        // Check active memtable
+        if let Some(value) = self.memtable.get(key) {
+            metrics().reads_hits.inc();
+            metrics().read_latency.observe(start.elapsed());
+            return Ok(Some(value));
         }
-        for sstable in self.sstables.iter_mut().rev() {
-            if let Some((v, _)) = sstable.get(key)? { return Ok(Some(v)); }
+
+        // Check immutable memtable
+        if let Some(immut) = &self.immutable_memtable {
+            if let Some(value) = immut.get(key) {
+                metrics().reads_hits.inc();
+                metrics().read_latency.observe(start.elapsed());
+                return Ok(Some(value));
+            }
         }
+
+        // Check SSTables (bloom filter check is inside sstable.get())
+        for sstable in &mut self.sstables {  // &mut for get()
+            match sstable.get(key) {
+                Ok(Some((value, _timestamp))) => {
+                    metrics().reads_hits.inc();
+                    metrics().read_latency.observe(start.elapsed());
+                    return Ok(Some(value));
+                }
+                Ok(None) => {
+                    // Bloom filter said "maybe" but key wasn't found
+                    metrics().bloom_filter_false_positives.inc();
+                    continue;
+                }
+                Err(crate::StorageError::CorruptedData(msg)) => {
+                    eprintln!("Warning: corrupted SSTable, skipping: {}", msg);
+                    continue;
+                }
+                Err(e) => return Err(e),
+            }
+        }
+
+        // Key not found
+        metrics().reads_misses.inc();
+        metrics().read_latency.observe(start.elapsed());
         Ok(None)
     }
 
@@ -262,6 +328,25 @@ impl StorageEngine {
             num_sstables: self.sstables.len(),
             immutable_memtable_entries: self.immutable_memtable.as_ref().map(|m| m.len()).unwrap_or(0),
         }
+    }
+
+    fn update_disk_usage(&self) {
+        let mut total = 0u64;
+        
+        for sstable in &self.sstables {
+            // Get file size from filesystem
+            let info = sstable.info();
+            if let Ok(metadata) = std::fs::metadata(&info.path) {
+                total += metadata.len();
+            }
+        }
+        
+        // Add WAL size
+        if let Ok(metadata) = std::fs::metadata(&self.wal_path) {
+            total += metadata.len();
+        }
+        
+        metrics().disk_usage_bytes.set(total);
     }
 
     /// Compaction logic (updated)
@@ -353,6 +438,18 @@ impl StorageEngine {
     pub fn memtable_size(&self) -> usize {
         self.memtable.size_bytes()
     }
+
+    /// Get formatted metrics summary
+    pub fn metrics(&self) -> String {
+        self.update_disk_usage();
+        crate::metrics::metrics().summary()
+    }
+    
+    /// Print metrics to stdout
+    pub fn print_metrics(&self) {
+        println!("{}", self.metrics());
+    }
+
 }
 
 impl Drop for StorageEngine {

@@ -62,6 +62,15 @@ pub struct Wal {
 }
 
 impl Wal {
+    pub fn file_size(&self) -> u64 {
+        // On-disk bytes + unflushed in-memory bytes
+        self.file.metadata().map(|m| m.len()).unwrap_or(0)
+            + self.buffer.len() as u64
+    }
+}
+
+
+impl Wal {
     /// Create or open a WAL file
     pub fn new(path: impl AsRef<Path>, buffer_size: usize) -> Result<Self> {
         let path = path.as_ref().to_path_buf();
