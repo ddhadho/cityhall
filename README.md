@@ -63,8 +63,8 @@ The project is built with the standard Rust toolchain.
 
 ```bash
 # Clone the repository
-git clone https://github.com/ddhadho/f42VQ.git
-cd f42VQ
+git clone https://github.com/ddhadho/cityhall.git
+cd cityhall
 
 # Build the binary in release mode
 cargo build --release
