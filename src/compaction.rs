@@ -47,14 +47,14 @@ impl PartialOrd for CompactionEntry {
 
 impl Ord for CompactionEntry {
     fn cmp(&self, other: &Self) -> Ordering {
-        // Reverse ordering for min-heap (BinaryHeap is max-heap by default)
+        // Reverse key ordering (BinaryHeap is max-heap)
         other.key.cmp(&self.key)
-            // If keys equal, prefer NEWER timestamp (REVERSE so newer comes first)
-            .then(other.timestamp.cmp(&self.timestamp))  // Note: other.cmp(self), not self.cmp(other)
-    }
+
+            // Reverse timestamp ordering: prefer NEWER timestamps
+            .then(self.timestamp.cmp(&other.timestamp))    }
 }
 
-/// Compaction statistics
+
 #[derive(Debug, Clone)]
 pub struct CompactionStats {
     pub input_sstables: usize,

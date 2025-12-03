@@ -76,9 +76,12 @@ fn test_wal_success_criteria() {
         let segments_after = count_wal_segments(dir.path());
         println!("  Segments after flush: {}", segments_after);
         
-        assert!(segments_after < segments_before, 
-                "Segments should decrease after flush: {} >= {}", 
-                segments_after, segments_before);
+        assert!(
+            segments_after <= segments_before && segments_after == 1,
+            "WAL cleanup should leave exactly one active segment. Before: {}, After: {}",
+            segments_before,
+            segments_after
+        );
         println!("  ✅ PASS: Segments reduced from {} to {}", segments_before, segments_after);
     }
     
