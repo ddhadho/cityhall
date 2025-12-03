@@ -44,6 +44,8 @@ Every optimization is backed by data. CityHall is not just correct; it's efficie
 
 CityHall follows a classic LSM-Tree design to prioritize write performance without sacrificing read efficiency.
 
+For a detailed technical explanation of the components, data flow, and design trade-offs, please see the **[Architecture Deep Dive](ARCHITECTURE.md)**.
+
 #### Write Path
 ```
 Client CLI → Daemon (TCP) → WAL (Batched) → Active MemTable (In-Memory BTreeMap)

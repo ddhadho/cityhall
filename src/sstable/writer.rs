@@ -133,7 +133,7 @@ impl SsTableWriter {
     /// ...
     /// [Data Block N]
     /// [Bloom filter]         ← bloom_offset
-    /// [Index]                ← index_offset
+    /// \[Index]                ← index_offset
     /// [Footer: 64 bytes]     ← End of file (contains pointers)
     pub fn finish(&mut self) -> Result<()> {
         // 1. Flush any remaining data in current block
