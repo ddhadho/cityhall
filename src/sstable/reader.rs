@@ -9,7 +9,7 @@
 use std::fs::File;
 use std::io::{Read, Seek, SeekFrom};
 use std::path::PathBuf;
-use bytes::{Buf, Bytes};
+use bytes::Buf;
 use crate::error::{Result, StorageError};
 use crate::sstable::format::*;
 use crate::sstable::bloom::BloomFilter;

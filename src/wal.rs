@@ -34,7 +34,9 @@ pub struct Wal {
 
 struct WalSegment {
     file: File,
+    #[allow(dead_code)]
     path: PathBuf,
+    #[allow(dead_code)]
     segment_number: u64,
     buffer: BytesMut,
     buffer_capacity: usize,

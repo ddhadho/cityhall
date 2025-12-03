@@ -1,7 +1,7 @@
-use crate::{Entry, Result, Wal, MemTable, StorageError};
+use crate::{Entry, Result, Wal, MemTable};
 use crate::sstable::{SsTableWriter, SsTableReader};
 use crate::metrics::metrics;
-use crate::compaction::{compact_sstables, select_sstables_for_compaction, CompactionStats};
+use crate::compaction::{compact_sstables, select_sstables_for_compaction};
 use std::path::PathBuf;
 use std::time::{SystemTime, Instant, Duration};
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -22,6 +22,7 @@ enum FlushMessage {
 
 /// Result from background flush
 struct FlushResult {
+#[allow(dead_code)]
     sstable_id: u64,
     path: PathBuf,
 }
@@ -31,6 +32,7 @@ pub struct StorageEngine {
     memtable: MemTable,
     immutable_memtable: Option<MemTable>,
     sstables: Vec<SsTableReader>,
+    #[allow(dead_code)]
     wal_path: PathBuf,
     data_dir: PathBuf,
     memtable_max_size: usize,
@@ -322,7 +324,7 @@ impl StorageEngine {
         }
 
         // Check SSTables (bloom filter check is inside sstable.get())
-        for sstable in &mut self.sstables {
+        for sstable in self.sstables.iter_mut().rev() {
             match sstable.get(key) {
                 Ok(Some((value, _timestamp))) => {
                     metrics().reads_hits.inc();

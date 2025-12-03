@@ -28,6 +28,7 @@ use super::format::{Header, Footer, IndexEntry, HEADER_SIZE};
 
 pub struct SsTableWriter {
     file: File,
+#[allow(dead_code)]
     path: PathBuf,
     block_builder: BlockBuilder,
     index_entries: Vec<IndexEntry>,

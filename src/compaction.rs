@@ -13,12 +13,11 @@
 //! 4. Write merged SSTable
 //! 5. Delete old SSTables
 
-use crate::{Result, StorageError};
+use crate::Result;
 use crate::sstable::{SsTableReader, SsTableWriter, DEFAULT_BLOCK_SIZE};
 use std::path::{Path, PathBuf};
 use std::collections::BinaryHeap;
 use std::cmp::Ordering;
-use std::time::Instant;
 
 /// Entry from an SSTable with source tracking
 #[derive(Debug, Clone)]
