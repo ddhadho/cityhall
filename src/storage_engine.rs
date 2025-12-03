@@ -175,6 +175,7 @@ impl StorageEngine {
         Ok(())
     }
 
+
     pub fn put(&mut self, key: Vec<u8>, value: Vec<u8>) -> Result<()> {
         let start = Instant::now();
 
@@ -182,10 +183,13 @@ impl StorageEngine {
         metrics().writes_total.inc();
         metrics().writes_bytes.add((key.len() + value.len()) as u64);
 
-        // Existing logic
         let timestamp = SystemTime::now().duration_since(SystemTime::UNIX_EPOCH)?.as_secs();
         let entry = Entry { key: key.clone(), value: value.clone(), timestamp };
         self.wal.append(&entry)?;
+        
+        // Update WAL size metric after append (add this line!)
+        metrics().wal_size_bytes.set(self.wal.size()?);
+        
         self.check_and_compact()?;
 
         let is_full = self.memtable.put(key, value, timestamp)?;
@@ -237,14 +241,26 @@ impl StorageEngine {
     }
 
     fn check_flush_completion(&mut self) -> Result<()> {
+        // Collect results first to avoid holding reference to self.flush_rx
+        let mut results = Vec::new();
         if let Some(ref rx) = self.flush_rx {
             while let Ok(result) = rx.try_recv() {
-                let reader = SsTableReader::open(result.path)?;
-                self.sstables.push(reader);
-                self.immutable_memtable = None;
-                self.update_disk_usage();
+                results.push(result);
             }
         }
+        
+        // Process results without holding any borrows
+        for result in results {
+            let reader = SsTableReader::open(result.path)?;
+            self.sstables.push(reader);
+            self.immutable_memtable = None;
+            
+            // ✅ NEW: Clean up WAL after successful flush
+            self.cleanup_wal_after_flush()?;
+            
+            self.update_disk_usage();
+        }
+        
         Ok(())
     }
 
@@ -255,11 +271,35 @@ impl StorageEngine {
         let memtable_to_flush = std::mem::replace(&mut self.memtable, MemTable::new(self.memtable_max_size));
         Self::flush_memtable_to_disk(memtable_to_flush, &sstable_path)?;
         self.sstables.push(SsTableReader::open(sstable_path)?);
+        
+        // ✅ NEW: Clean up WAL after successful flush
+        self.cleanup_wal_after_flush()?;
+        
         self.update_disk_usage();
         Ok(())
     }
 
-    pub fn get(&mut self, key: &[u8]) -> Result<Option<Vec<u8>>> {  // Note: &mut self
+    /// ✅ NEW: WAL cleanup helper method
+    fn cleanup_wal_after_flush(&mut self) -> Result<()> {
+        println!("\n🧹 Starting WAL cleanup after flush...");
+        
+        // Mark current segment as flushed
+        self.wal.mark_flushed()?;
+        
+        // Clean up old segments
+        self.wal.cleanup_old_segments()?;
+        
+        // Update WAL metrics
+        if let Ok(wal_size) = self.wal.size() {
+            metrics().wal_size_bytes.set(wal_size);
+            println!("📊 Updated WAL size metric: {} bytes ({} MB)", 
+                     wal_size, wal_size / 1_048_576);
+        }
+        
+        Ok(())
+    }
+
+    pub fn get(&mut self, key: &[u8]) -> Result<Option<Vec<u8>>> {
         let start = Instant::now();
 
         // Track total read operation
@@ -282,7 +322,7 @@ impl StorageEngine {
         }
 
         // Check SSTables (bloom filter check is inside sstable.get())
-        for sstable in &mut self.sstables {  // &mut for get()
+        for sstable in &mut self.sstables {
             match sstable.get(key) {
                 Ok(Some((value, _timestamp))) => {
                     metrics().reads_hits.inc();
@@ -330,7 +370,7 @@ impl StorageEngine {
         }
     }
 
-    fn update_disk_usage(&self) {
+    fn update_disk_usage(&mut self) {
         let mut total = 0u64;
         
         for sstable in &self.sstables {
@@ -342,8 +382,10 @@ impl StorageEngine {
         }
         
         // Add WAL size
-        if let Ok(metadata) = std::fs::metadata(&self.wal_path) {
-            total += metadata.len();
+        if let Ok(wal_size) = self.wal.size() {
+            total += wal_size;
+            // Update WAL metric
+            metrics().wal_size_bytes.set(wal_size);
         }
         
         metrics().disk_usage_bytes.set(total);
@@ -441,15 +483,14 @@ impl StorageEngine {
 
     /// Get formatted metrics summary
     pub fn metrics(&self) -> String {
-        self.update_disk_usage();
         crate::metrics::metrics().summary()
     }
     
     /// Print metrics to stdout
-    pub fn print_metrics(&self) {
+    pub fn print_metrics(&mut self) {
+        self.update_disk_usage();
         println!("{}", self.metrics());
     }
-
 }
 
 impl Drop for StorageEngine {
