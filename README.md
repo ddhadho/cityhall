@@ -61,6 +61,30 @@ Client CLI → Daemon (TCP) → Active MemTable → Immutable MemTable → SSTab
                                                                        ↳ Bloom Filter check (to skip I/O)
 ```
 
+## 🔄 Replication (Work in Progress)
+
+CityHall now supports leader-replica replication for multi-site deployments.
+
+### Current Status 
+✅ Segment-based replication architecture  
+✅ Replica state tracking and persistence  
+✅ WAL segment reading APIs  
+✅ Replica-aware segment cleanup  
+
+### Coming Soon 
+🚧 Network protocol (TCP-based)  
+🚧 Leader replication server  
+🚧 Replica sync agent  
+🚧 Automatic catch-up after downtime  
+
+### Architecture
+- **Replication Model**: Leader-replica (single write leader)
+- **Consistency**: Eventual consistency
+- **Sync Method**: Pull-based (replicas poll leader)
+- **Granularity**: Segment-level (100MB chunks)
+
+See [REPLICATION_DESIGN.md](REPLICATION_DESIGN.md) for details.
+
 ## Getting Started
 
 ### Building
