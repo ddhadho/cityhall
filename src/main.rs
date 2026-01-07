@@ -1,13 +1,13 @@
 use clap::{Parser, Subcommand};
-use std::path::PathBuf;
 use std::env;
+use std::path::PathBuf;
 use std::sync::Arc;
 
+use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 use tokio::net::{TcpListener, TcpStream};
 use tokio::sync::Mutex;
-use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 
-use cityhall::{StorageEngine, Result};
+use cityhall::{Result, StorageEngine};
 
 #[derive(Parser)]
 #[command(author, version, about, long_about = None)]
@@ -38,7 +38,7 @@ enum Commands {
     Client {
         #[command(subcommand)]
         command: ClientCommands,
-        
+
         /// The address of the server to connect to.
         #[arg(short, long, default_value = "127.0.0.1:7878")]
         server_addr: String,
@@ -48,14 +48,9 @@ enum Commands {
 #[derive(Subcommand)]
 enum ClientCommands {
     /// Puts a key-value pair into the database
-    Put {
-        key: String,
-        value: String,
-    },
+    Put { key: String, value: String },
     /// Gets the value associated with a key
-    Get {
-        key: String,
-    },
+    Get { key: String },
 }
 
 #[tokio::main]
@@ -74,7 +69,7 @@ async fn main() -> Result<()> {
 
             println!("Starting CityHall server on {}...", bind_addr);
             println!("Using database path: {:?}", db_path);
-            
+
             let engine = StorageEngine::new(db_path, memtable_max_size)?;
             let engine = Arc::new(Mutex::new(engine));
 
@@ -83,7 +78,7 @@ async fn main() -> Result<()> {
             loop {
                 let (stream, addr) = listener.accept().await.unwrap();
                 println!("Accepted connection from: {}", addr);
-                
+
                 let engine = Arc::clone(&engine);
 
                 tokio::spawn(async move {
@@ -93,9 +88,12 @@ async fn main() -> Result<()> {
                 });
             }
         }
-        Commands::Client { command, server_addr } => {
+        Commands::Client {
+            command,
+            server_addr,
+        } => {
             let mut stream = TcpStream::connect(server_addr).await?;
-            
+
             match command {
                 ClientCommands::Put { key, value } => {
                     let command_str = format!("PUT {} {}\n", key, value);
@@ -106,7 +104,7 @@ async fn main() -> Result<()> {
                     print!("{}", response_line);
                 }
                 ClientCommands::Get { key } => {
-                    let command_str = format!("GET {}\n", key); 
+                    let command_str = format!("GET {}\n", key);
                     stream.write_all(command_str.as_bytes()).await?;
                     let mut reader = BufReader::new(&mut stream);
                     let mut response_line = String::new();
@@ -120,15 +118,19 @@ async fn main() -> Result<()> {
     Ok(())
 }
 
-async fn handle_connection(stream: TcpStream, engine: Arc<Mutex<StorageEngine>>) -> std::io::Result<()> {
+async fn handle_connection(
+    stream: TcpStream,
+    engine: Arc<Mutex<StorageEngine>>,
+) -> std::io::Result<()> {
     let mut reader = BufReader::new(stream);
     let mut line = String::new();
 
     loop {
         line.clear();
         let bytes_read = reader.read_line(&mut line).await?;
-        if bytes_read == 0 { // Connection closed
-            return Ok(())
+        if bytes_read == 0 {
+            // Connection closed
+            return Ok(());
         }
 
         let parts: Vec<&str> = line.trim().splitn(3, ' ').collect();
@@ -140,8 +142,12 @@ async fn handle_connection(stream: TcpStream, engine: Arc<Mutex<StorageEngine>>)
         match *cmd {
             "PUT" => {
                 if let (Some(key), Some(value)) = (parts.get(1), parts.get(2)) {
-                    if let Err(e) = engine_lock.put(key.as_bytes().to_vec(), value.as_bytes().to_vec()) {
-                        writer.write_all(format!("ERROR: {}\n", e).as_bytes()).await?;
+                    if let Err(e) =
+                        engine_lock.put(key.as_bytes().to_vec(), value.as_bytes().to_vec())
+                    {
+                        writer
+                            .write_all(format!("ERROR: {}\n", e).as_bytes())
+                            .await?;
                     } else {
                         writer.write_all(b"OK\n").await?;
                     }
@@ -160,14 +166,16 @@ async fn handle_connection(stream: TcpStream, engine: Arc<Mutex<StorageEngine>>)
                             writer.write_all(b"NOT_FOUND\n").await?;
                         }
                         Err(e) => {
-                            writer.write_all(format!("ERROR: {}\n", e).as_bytes()).await?;
+                            writer
+                                .write_all(format!("ERROR: {}\n", e).as_bytes())
+                                .await?;
                         }
                     }
                 } else {
                     writer.write_all(b"ERROR invalid GET format\n").await?;
                 }
             }
-            "" => { /* Ignore empty lines */ } 
+            "" => { /* Ignore empty lines */ }
             _ => {
                 writer.write_all(b"ERROR unknown command\n").await?;
             }

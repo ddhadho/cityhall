@@ -1,21 +1,21 @@
 //! SSTable reader implementation
-//! 
+//!
 //! Key design decisions:
 //! - Loads index + bloom filter into memory for fast lookups
 //! - Reads data blocks on-demand from disk
 //! - Handles corruption gracefully (returns Error, doesn't panic)
 //! - Uses prefix decompression with validation
 
+use crate::error::{Result, StorageError};
+use crate::sstable::bloom::BloomFilter;
+use crate::sstable::format::*;
+use bytes::Buf;
 use std::fs::File;
 use std::io::{Read, Seek, SeekFrom};
 use std::path::PathBuf;
-use bytes::Buf;
-use crate::error::{Result, StorageError};
-use crate::sstable::format::*;
-use crate::sstable::bloom::BloomFilter;
 
 /// SSTable reader
-/// 
+///
 /// Memory layout:
 /// - Header: ~64 bytes
 /// - Index: ~40 bytes per block (e.g., 2.5MB for 1GB file with 16KB blocks)
@@ -23,7 +23,7 @@ use crate::sstable::bloom::BloomFilter;
 /// - Data blocks: read on-demand
 pub struct SsTableReader {
     file: File,
-    file_size: u64,  
+    file_size: u64,
     path: PathBuf,
     index: Vec<IndexEntry>,
     bloom_filter: BloomFilter,
@@ -32,25 +32,25 @@ pub struct SsTableReader {
 
 impl SsTableReader {
     /// Open an SSTable file for reading
-    /// 
+    ///
     /// Loads metadata (header, index, bloom filter) into memory
     /// but reads data blocks on-demand during get/scan operations
     pub fn open(path: PathBuf) -> Result<Self> {
         let mut file = File::open(&path)?;
-        let file_size = file.metadata()?.len(); 
-        
+        let file_size = file.metadata()?.len();
+
         // 1. Read and validate header
         let header = Self::read_header(&mut file)?;
-        
+
         // 2. Read footer (contains pointers to index and bloom filter)
         let footer = Self::read_footer(&mut file)?;
-        
+
         // 3. Load bloom filter into memory
         let bloom_filter = Self::read_bloom_filter(&mut file, &footer)?;
-        
+
         // 4. Load index into memory (critical for fast lookups)
         let index = Self::read_index(&mut file, &footer)?;
-        
+
         Ok(Self {
             file,
             file_size,
@@ -61,12 +61,13 @@ impl SsTableReader {
         })
     }
 
-        pub fn file_size(&self) -> u64 {  // ADD THIS METHOD
-            self.file_size
-        }
-    
+    pub fn file_size(&self) -> u64 {
+        // ADD THIS METHOD
+        self.file_size
+    }
+
     /// Get a value by key
-    /// 
+    ///
     /// Algorithm:
     /// 1. Check bloom filter (fast negative test)
     /// 2. Binary search index to find candidate block
@@ -78,16 +79,16 @@ impl SsTableReader {
         if !self.bloom_filter.contains(key) {
             return Ok(None);
         }
-        
+
         // Find which block might contain this key
         let block_idx = match self.find_block_for_key(key) {
             Some(idx) => idx,
-            None => return Ok(None),  // Key is before first block
+            None => return Ok(None), // Key is before first block
         };
-        
+
         // Read and decompress the block
         let entries = self.read_and_decompress_block(block_idx)?;
-        
+
         // Binary search within the decompressed block
         // (entries are sorted by key)
         match entries.binary_search_by(|entry| entry.key.as_slice().cmp(key)) {
@@ -95,101 +96,98 @@ impl SsTableReader {
             Err(_) => Ok(None),
         }
     }
-    
+
     /// Scan a range of keys [start, end] inclusive
-    /// 
+    ///
     /// Returns all entries where start <= key <= end
-    pub fn scan(&mut self, start: &[u8], end: &[u8]) 
-        -> Result<Vec<(Vec<u8>, Vec<u8>, u64)>> 
-    {
+    pub fn scan(&mut self, start: &[u8], end: &[u8]) -> Result<Vec<(Vec<u8>, Vec<u8>, u64)>> {
         let mut results = Vec::new();
-        
+
         // Find first block that might contain start key
-        let start_block = self.find_block_for_key(start)
-            .unwrap_or(0);  // If before first block, start from beginning
-        
+        let start_block = self.find_block_for_key(start).unwrap_or(0); // If before first block, start from beginning
+
         // Read consecutive blocks until we pass end key
         for block_idx in start_block..self.index.len() {
             let entries = self.read_and_decompress_block(block_idx)?;
-            
+
             for entry in entries {
                 // Skip keys before start
                 if entry.key.as_slice() < start {
                     continue;
                 }
-                
+
                 // Stop when we pass end
                 if entry.key.as_slice() > end {
                     return Ok(results);
                 }
-                
+
                 // This key is in range
                 results.push((entry.key, entry.value, entry.timestamp));
             }
         }
-        
+
         Ok(results)
     }
 
     // === Helper Methods ===
-    
+
     /// Read header from file
     fn read_header(file: &mut File) -> Result<Header> {
         file.seek(SeekFrom::Start(0))?;
-        
+
         let mut buf = vec![0u8; HEADER_SIZE];
         file.read_exact(&mut buf)?;
-        
+
         Header::decode(&buf)
     }
-    
+
     /// Read footer from file (at the end)
     fn read_footer(file: &mut File) -> Result<Footer> {
         file.seek(SeekFrom::End(-(FOOTER_SIZE as i64)))?;
-        
+
         let mut buf = vec![0u8; FOOTER_SIZE];
         file.read_exact(&mut buf)?;
-        
+
         Footer::decode(&buf)
     }
-    
+
     /// Read bloom filter from file
     fn read_bloom_filter(file: &mut File, footer: &Footer) -> Result<BloomFilter> {
         if footer.bloom_size == 0 {
             // No bloom filter in file (placeholder writer)
             return Ok(BloomFilter::new(1000, 0.01));
         }
-        
+
         file.seek(SeekFrom::Start(footer.bloom_offset))?;
-        
+
         let mut buf = vec![0u8; footer.bloom_size as usize];
         file.read_exact(&mut buf)?;
-        
+
         BloomFilter::decode(&buf)
     }
-    
+
     /// Read index from file
     fn read_index(file: &mut File, footer: &Footer) -> Result<Vec<IndexEntry>> {
         file.seek(SeekFrom::Start(footer.index_offset))?;
-        
+
         let mut buf = vec![0u8; footer.index_size as usize];
         file.read_exact(&mut buf)?;
-        
+
         let mut entries = Vec::new();
         let mut cursor = &buf[..];
-        
+
         while cursor.remaining() > 0 {
             let entry = IndexEntry::decode(&mut cursor)?;
             entries.push(entry);
         }
-        
+
         Ok(entries)
     }
-    
+
     /// Find which block might contain the given key
-    /// 
+    ///
     /// Returns the index of the last block where first_key <= key
-    /// 
+    ///
     /// Example:
     ///   Block 0: first_key = "a"
     ///   Block 1: first_key = "m"
@@ -202,18 +200,18 @@ impl SsTableReader {
         if self.index.is_empty() {
             return None;
         }
-        
+
         // Key is before the first block
         if key < self.index[0].first_key.as_slice() {
             return None;
         }
-        
+
         // Use partition_point to find the insertion point
         // This returns the first index where first_key > key
-        let idx = self.index.partition_point(|entry| {
-            entry.first_key.as_slice() <= key
-        });
-        
+        let idx = self
+            .index
+            .partition_point(|entry| entry.first_key.as_slice() <= key);
+
         // We want the block BEFORE the insertion point
         // (the last block where first_key <= key)
         if idx > 0 {
@@ -222,135 +220,131 @@ impl SsTableReader {
             None
         }
     }
-    
+
     /// Read a block from disk and decompress it
-    /// 
+    ///
     /// This is the hot path for reads - optimize carefully!
     fn read_and_decompress_block(&mut self, block_idx: usize) -> Result<Vec<BlockEntry>> {
         if block_idx >= self.index.len() {
-            return Err(StorageError::InvalidFormat(
-                format!("Block index {} out of range", block_idx)
-            ));
+            return Err(StorageError::InvalidFormat(format!(
+                "Block index {} out of range",
+                block_idx
+            )));
         }
-        
+
         let entry = &self.index[block_idx];
-        
+
         // Read compressed block from disk
         self.file.seek(SeekFrom::Start(entry.offset))?;
         let mut compressed = vec![0u8; entry.size as usize];
         self.file.read_exact(&mut compressed)?;
-        
+
         // Decompress with Snappy
         let decompressed = snap::raw::Decoder::new()
             .decompress_vec(&compressed)
-            .map_err(|e| StorageError::CorruptedData(
-                format!("Snappy decompression failed: {}", e)
-            ))?;
-        
+            .map_err(|e| {
+                StorageError::CorruptedData(format!("Snappy decompression failed: {}", e))
+            })?;
+
         // Decode entries with prefix decompression
         Self::decode_block(&decompressed)
     }
-    
+
     /// Decode a decompressed block into entries
-    /// 
+    ///
     /// Handles prefix compression: each entry stores shared prefix length
     /// with previous key, then only the differing suffix
     fn decode_block(data: &[u8]) -> Result<Vec<BlockEntry>> {
         let mut entries = Vec::new();
         let mut cursor = &data[..];
         let mut previous_key = Vec::new();
-        
+
         while cursor.remaining() > 0 {
             // Read prefix compression metadata
             let shared_len = Self::decode_varint(&mut cursor)?;
             let unshared_len = Self::decode_varint(&mut cursor)?;
             let value_len = Self::decode_varint(&mut cursor)?;
-            
+
             // Validate shared_len (detect corruption)
             if shared_len > previous_key.len() {
-                return Err(StorageError::CorruptedData(
-                    format!("Invalid shared_len {} > previous key len {}", 
-                            shared_len, previous_key.len())
-                ));
+                return Err(StorageError::CorruptedData(format!(
+                    "Invalid shared_len {} > previous key len {}",
+                    shared_len,
+                    previous_key.len()
+                )));
             }
-            
+
             // Reconstruct full key: reuse prefix + append suffix
             let mut key = Vec::with_capacity(shared_len + unshared_len);
             key.extend_from_slice(&previous_key[..shared_len]);
-            
+
             if cursor.remaining() < unshared_len {
-                return Err(StorageError::CorruptedData(
-                    "Truncated key delta".into()
-                ));
+                return Err(StorageError::CorruptedData("Truncated key delta".into()));
             }
             key.extend_from_slice(&cursor[..unshared_len]);
             cursor.advance(unshared_len);
-            
+
             // Read value
             if cursor.remaining() < value_len {
-                return Err(StorageError::CorruptedData(
-                    "Truncated value".into()
-                ));
+                return Err(StorageError::CorruptedData("Truncated value".into()));
             }
             let value = cursor[..value_len].to_vec();
             cursor.advance(value_len);
-            
+
             // Read timestamp
             if cursor.remaining() < 8 {
-                return Err(StorageError::CorruptedData(
-                    "Truncated timestamp".into()
-                ));
+                return Err(StorageError::CorruptedData("Truncated timestamp".into()));
             }
             let timestamp = cursor.get_u64_le();
-            
+
             // Validate sort order (keys must be sorted)
             if !previous_key.is_empty() && key <= previous_key {
                 return Err(StorageError::CorruptedData(
-                    "Keys not in sorted order".into()
+                    "Keys not in sorted order".into(),
                 ));
             }
-            
+
             previous_key = key.clone();
-            entries.push(BlockEntry { key, value, timestamp });
+            entries.push(BlockEntry {
+                key,
+                value,
+                timestamp,
+            });
         }
-        
+
         Ok(entries)
     }
-    
+
     /// Decode a variable-length integer (varint)
-    /// 
+    ///
     /// Uses LEB128 encoding: 7 bits of data per byte, MSB = continuation bit
     fn decode_varint(buf: &mut &[u8]) -> Result<usize> {
         let mut result = 0;
         let mut shift = 0;
-        
+
         loop {
             if buf.is_empty() {
-                return Err(StorageError::CorruptedData(
-                    "Truncated varint".into()
-                ));
+                return Err(StorageError::CorruptedData("Truncated varint".into()));
             }
-            
+
             let byte = buf[0];
             buf.advance(1);
-            
+
             result |= ((byte & 0x7F) as usize) << shift;
-            
+
             if byte & 0x80 == 0 {
                 break;
             }
-            
+
             shift += 7;
             if shift >= 64 {
-                return Err(StorageError::CorruptedData(
-                    "Varint too large".into()
-                ));
+                return Err(StorageError::CorruptedData("Varint too large".into()));
             }
         }
-        
+
         Ok(result)
     }
-    
+
     /// Get diagnostic information about this SSTable
     pub fn info(&self) -> SsTableInfo {
         SsTableInfo {
@@ -386,35 +380,35 @@ mod tests {
     use super::*;
     use crate::sstable::writer::SsTableWriter;
     use tempfile::TempDir;
-    
+
     #[test]
     fn test_reader_basic() -> Result<()> {
         let temp_dir = TempDir::new()?;
         let path = temp_dir.path().join("test.sst");
-        
+
         // Write some data
         let mut writer = SsTableWriter::new(path.clone(), DEFAULT_BLOCK_SIZE)?;
         writer.add(b"key1", b"value1", 100)?;
         writer.add(b"key2", b"value2", 200)?;
         writer.add(b"key3", b"value3", 300)?;
         writer.finish()?;
-        
+
         // Read it back
         let mut reader = SsTableReader::open(path)?;
-        
+
         assert_eq!(reader.get(b"key1")?, Some((b"value1".to_vec(), 100)));
         assert_eq!(reader.get(b"key2")?, Some((b"value2".to_vec(), 200)));
         assert_eq!(reader.get(b"key3")?, Some((b"value3".to_vec(), 300)));
         assert_eq!(reader.get(b"key4")?, None);
-        
+
         Ok(())
     }
-    
+
     #[test]
     fn test_reader_scan() -> Result<()> {
         let temp_dir = TempDir::new()?;
         let path = temp_dir.path().join("test.sst");
-        
+
         // Write test data
         let mut writer = SsTableWriter::new(path.clone(), DEFAULT_BLOCK_SIZE)?;
         for i in 0..10 {
@@ -423,15 +417,15 @@ mod tests {
             writer.add(key.as_bytes(), value.as_bytes(), i as u64)?;
         }
         writer.finish()?;
-        
+
         // Scan a range
         let mut reader = SsTableReader::open(path)?;
         let results = reader.scan(b"key03", b"key07")?;
-        
+
         assert_eq!(results.len(), 5);
         assert_eq!(results[0].0, b"key03");
         assert_eq!(results[4].0, b"key07");
-        
+
         Ok(())
     }
 }
@@ -439,19 +433,19 @@ mod tests {
 #[cfg(test)]
 mod benchmark {
     use super::*;
-    use crate::sstable::writer::SsTableWriter;
     use crate::sstable::format::DEFAULT_BLOCK_SIZE;
-    use tempfile::TempDir;
+    use crate::sstable::writer::SsTableWriter;
     use std::time::Instant;
-    
+    use tempfile::TempDir;
+
     #[test]
     #[ignore] // Run with: cargo test benchmark_bloom_filter_impact -- --ignored --nocapture
     fn benchmark_bloom_filter_impact() -> Result<()> {
         println!("\n=== Bloom Filter Performance Benchmark ===\n");
-        
+
         let temp_dir = TempDir::new()?;
         let path = temp_dir.path().join("benchmark.sst");
-        
+
         // Write SSTable with 1000 keys
         let mut writer = SsTableWriter::new(path.clone(), DEFAULT_BLOCK_SIZE)?;
         for i in 0..1000 {
@@ -460,13 +454,13 @@ mod benchmark {
             writer.add(key.as_bytes(), value.as_bytes(), i as u64)?;
         }
         writer.finish()?;
-        
+
         // Open reader
         let mut reader = SsTableReader::open(path)?;
-        
+
         println!("SSTable created with 1,000 keys");
         println!("Bloom filter stats: {:?}\n", reader.bloom_filter.stats());
-        
+
         // Benchmark 1: Keys that exist (bloom filter won't help much)
         let start = Instant::now();
         let mut hits = 0;
@@ -480,8 +474,11 @@ mod benchmark {
         println!("Present keys (1000 lookups):");
         println!("  Hits: {}/1000", hits);
         println!("  Time: {:?}", duration_hits);
-        println!("  Avg: {:.2}μs per lookup", duration_hits.as_micros() as f64 / 1000.0);
-        
+        println!(
+            "  Avg: {:.2}μs per lookup",
+            duration_hits.as_micros() as f64 / 1000.0
+        );
+
         // Benchmark 2: Keys that DON'T exist (bloom filter filters most)
         let start = Instant::now();
         let mut misses = 0;
@@ -495,14 +492,20 @@ mod benchmark {
         println!("\nMissing keys (1000 lookups):");
         println!("  Misses: {}/1000", misses);
         println!("  Time: {:?}", duration_misses);
-        println!("  Avg: {:.2}μs per lookup", duration_misses.as_micros() as f64 / 1000.0);
-        
+        println!(
+            "  Avg: {:.2}μs per lookup",
+            duration_misses.as_micros() as f64 / 1000.0
+        );
+
         // Calculate speedup
         let speedup = duration_hits.as_micros() as f64 / duration_misses.as_micros() as f64;
         println!("\n📊 Performance Impact:");
-        println!("  Missing keys are {:.1}x FASTER than present keys", speedup);
+        println!(
+            "  Missing keys are {:.1}x FASTER than present keys",
+            speedup
+        );
         println!("  (Bloom filter rejects ~99% without disk I/O)");
-        
+
         Ok(())
     }
 }
