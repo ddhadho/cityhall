@@ -9,7 +9,7 @@ use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 /// Global metrics singleton
-static METRICS: once_cell::sync::Lazy<Arc<Metrics>> = 
+static METRICS: once_cell::sync::Lazy<Arc<Metrics>> =
     once_cell::sync::Lazy::new(|| Arc::new(Metrics::new()));
 
 pub fn metrics() -> Arc<Metrics> {
@@ -22,38 +22,38 @@ pub struct Metrics {
     // === Operation Counters ===
     // Writes
     pub writes_total: Counter,
-    pub writes_bytes: Counter,  // NEW: Total bytes written
-    
+    pub writes_bytes: Counter, // NEW: Total bytes written
+
     // Reads
     pub reads_total: Counter,
-    pub reads_hits: Counter,    // NEW: Found in memtable/sstable
-    pub reads_misses: Counter,  // NEW: Key not found
-    
+    pub reads_hits: Counter,   // NEW: Found in memtable/sstable
+    pub reads_misses: Counter, // NEW: Key not found
+
     // Flushes
     pub flushes_total: Counter,
     pub flush_duration: Histogram,
-    
+
     // Compactions
     pub compactions_total: Counter,
-    pub compaction_bytes_in: Counter,     // NEW: Input size
-    pub compaction_bytes_out: Counter,    // NEW: Output size
+    pub compaction_bytes_in: Counter,  // NEW: Input size
+    pub compaction_bytes_out: Counter, // NEW: Output size
     pub compaction_duration: Histogram,
-    
+
     // Bloom filter effectiveness
     pub bloom_filter_hits: Counter,
     pub bloom_filter_misses: Counter,
     pub bloom_filter_false_positives: Counter,
-    
+
     // === Performance Metrics ===
     pub write_latency: Histogram,
     pub read_latency: Histogram,
-    
+
     // === System State ===
     pub memtable_size_bytes: Gauge,
-    pub memtable_entries: Gauge,        // NEW: Number of entries
+    pub memtable_entries: Gauge, // NEW: Number of entries
     pub immutable_count: Gauge,
     pub sstable_count: Gauge,
-    pub disk_usage_bytes: Gauge,        // NEW: Total disk usage
+    pub disk_usage_bytes: Gauge, // NEW: Total disk usage
     pub wal_size_bytes: Gauge,
 }
 
@@ -69,16 +69,16 @@ impl Metrics {
             compactions_total: Counter::new(),
             compaction_bytes_in: Counter::new(),
             compaction_bytes_out: Counter::new(),
-            
+
             bloom_filter_hits: Counter::new(),
             bloom_filter_misses: Counter::new(),
             bloom_filter_false_positives: Counter::new(),
-            
+
             write_latency: Histogram::new(),
             read_latency: Histogram::new(),
             flush_duration: Histogram::new(),
             compaction_duration: Histogram::new(),
-            
+
             memtable_size_bytes: Gauge::new(),
             memtable_entries: Gauge::new(),
             immutable_count: Gauge::new(),
@@ -87,55 +87,65 @@ impl Metrics {
             wal_size_bytes: Gauge::new(),
         }
     }
-    
+
     // === Computed Metrics ===
-    
+
     /// Read hit rate (0.0 to 1.0)
     pub fn read_hit_rate(&self) -> f64 {
         let hits = self.reads_hits.get();
         let total = self.reads_total.get();
-        if total == 0 { return 0.0; }
+        if total == 0 {
+            return 0.0;
+        }
         hits as f64 / total as f64
     }
-    
+
     /// Read miss rate (0.0 to 1.0)
     pub fn read_miss_rate(&self) -> f64 {
         1.0 - self.read_hit_rate()
     }
-    
+
     /// Bloom filter hit rate (0.0 to 1.0)
     pub fn bloom_filter_hit_rate(&self) -> f64 {
         let hits = self.bloom_filter_hits.get();
         let misses = self.bloom_filter_misses.get();
         let total = hits + misses;
-        if total == 0 { return 0.0; }
+        if total == 0 {
+            return 0.0;
+        }
         hits as f64 / total as f64
     }
-    
+
     /// Bloom filter false positive rate (0.0 to 1.0)
     pub fn bloom_filter_fp_rate(&self) -> f64 {
         let fps = self.bloom_filter_false_positives.get();
         let total_checks = self.bloom_filter_hits.get() + self.bloom_filter_misses.get();
-        if total_checks == 0 { return 0.0; }
+        if total_checks == 0 {
+            return 0.0;
+        }
         fps as f64 / total_checks as f64
     }
-    
+
     /// Compaction space savings (0.0 to 1.0)
     pub fn compaction_space_savings(&self) -> f64 {
         let bytes_in = self.compaction_bytes_in.get();
         let bytes_out = self.compaction_bytes_out.get();
-        if bytes_in == 0 { return 0.0; }
+        if bytes_in == 0 {
+            return 0.0;
+        }
         1.0 - (bytes_out as f64 / bytes_in as f64)
     }
-    
+
     /// Write amplification factor
     pub fn write_amplification(&self) -> f64 {
         let logical_writes = self.writes_bytes.get();
         let physical_writes = self.compaction_bytes_out.get();
-        if logical_writes == 0 { return 1.0; }
+        if logical_writes == 0 {
+            return 1.0;
+        }
         physical_writes as f64 / logical_writes as f64
     }
-    
+
     /// Format metrics for display
     pub fn summary(&self) -> String {
         format!(
@@ -188,24 +198,20 @@ System State:
             self.reads_misses.get(),
             self.flushes_total.get(),
             self.compactions_total.get(),
-            
             // Read performance
             self.read_hit_rate() * 100.0,
             self.read_miss_rate() * 100.0,
-            
             // Bloom filter
             self.bloom_filter_hit_rate() * 100.0,
             self.bloom_filter_fp_rate() * 100.0,
             self.bloom_filter_hits.get(),
             self.bloom_filter_misses.get(),
             self.bloom_filter_false_positives.get(),
-            
             // Compaction
             self.compaction_bytes_in.get() / 1_048_576,
             self.compaction_bytes_out.get() / 1_048_576,
             self.compaction_space_savings() * 100.0,
             self.write_amplification(),
-            
             // Latency
             self.write_latency.percentile(0.5).as_micros() as f64,
             self.write_latency.percentile(0.99).as_micros() as f64,
@@ -213,7 +219,6 @@ System State:
             self.read_latency.percentile(0.99).as_micros() as f64,
             self.flush_duration.percentile(0.5).as_micros() as f64,
             self.flush_duration.percentile(0.99).as_micros() as f64,
-            
             // System state
             self.memtable_size_bytes.get() / 1_048_576,
             self.memtable_entries.get(),
@@ -223,7 +228,7 @@ System State:
             self.disk_usage_bytes.get() / 1_048_576,
         )
     }
-    
+
     /// Reset all metrics (useful for testing)
     pub fn reset(&self) {
         self.writes_total.reset();
@@ -269,19 +274,19 @@ impl Counter {
             value: AtomicU64::new(0),
         }
     }
-    
+
     pub fn inc(&self) {
         self.value.fetch_add(1, Ordering::Relaxed);
     }
-    
+
     pub fn add(&self, delta: u64) {
         self.value.fetch_add(delta, Ordering::Relaxed);
     }
-    
+
     pub fn get(&self) -> u64 {
         self.value.load(Ordering::Relaxed)
     }
-    
+
     pub fn reset(&self) {
         self.value.store(0, Ordering::Relaxed);
     }
@@ -299,27 +304,27 @@ impl Gauge {
             value: AtomicU64::new(0),
         }
     }
-    
+
     pub fn set(&self, value: u64) {
         self.value.store(value, Ordering::Relaxed);
     }
-    
+
     pub fn inc(&self) {
         self.value.fetch_add(1, Ordering::Relaxed);
     }
-    
+
     pub fn dec(&self) {
         self.value.fetch_sub(1, Ordering::Relaxed);
     }
-    
+
     pub fn add(&self, delta: u64) {
         self.value.fetch_add(delta, Ordering::Relaxed);
     }
-    
+
     pub fn sub(&self, delta: u64) {
         self.value.fetch_sub(delta, Ordering::Relaxed);
     }
-    
+
     pub fn get(&self) -> u64 {
         self.value.load(Ordering::Relaxed)
     }
@@ -336,18 +341,18 @@ impl Histogram {
     pub fn new() -> Self {
         Self::with_capacity(10_000)
     }
-    
+
     pub fn with_capacity(max_samples: usize) -> Self {
         Self {
             samples: RwLock::new(Vec::with_capacity(max_samples)),
             max_samples,
         }
     }
-    
+
     /// Record a latency sample
     pub fn observe(&self, duration: Duration) {
         let mut samples = self.samples.write();
-        
+
         // Reservoir sampling to bound memory
         if samples.len() < self.max_samples {
             samples.push(duration);
@@ -357,26 +362,26 @@ impl Histogram {
             samples[idx] = duration;
         }
     }
-    
+
     /// Get percentile (0.0 to 1.0)
     pub fn percentile(&self, p: f64) -> Duration {
         let samples = self.samples.read();
-        
+
         if samples.is_empty() {
             return Duration::ZERO;
         }
-        
+
         let mut sorted: Vec<Duration> = samples.clone();
         sorted.sort();
-        
+
         let idx = ((sorted.len() - 1) as f64 * p) as usize;
         sorted[idx]
     }
-    
+
     pub fn count(&self) -> usize {
         self.samples.read().len()
     }
-    
+
     pub fn reset(&self) {
         self.samples.write().clear();
     }
@@ -417,84 +422,84 @@ macro_rules! time {
 mod tests {
     use super::*;
     use std::thread;
-    
+
     #[test]
     fn test_counter() {
         let counter = Counter::new();
         assert_eq!(counter.get(), 0);
-        
+
         counter.inc();
         assert_eq!(counter.get(), 1);
-        
+
         counter.add(99);
         assert_eq!(counter.get(), 100);
-        
+
         counter.reset();
         assert_eq!(counter.get(), 0);
     }
-    
+
     #[test]
     fn test_gauge() {
         let gauge = Gauge::new();
         assert_eq!(gauge.get(), 0);
-        
+
         gauge.set(42);
         assert_eq!(gauge.get(), 42);
-        
+
         gauge.inc();
         assert_eq!(gauge.get(), 43);
-        
+
         gauge.dec();
         assert_eq!(gauge.get(), 42);
-        
+
         gauge.add(10);
         assert_eq!(gauge.get(), 52);
-        
+
         gauge.sub(2);
         assert_eq!(gauge.get(), 50);
     }
-    
+
     #[test]
     fn test_histogram() {
         let hist = Histogram::new();
-        
+
         // Add samples
         for i in 1..=100 {
             hist.observe(Duration::from_micros(i));
         }
-        
+
         assert_eq!(hist.count(), 100);
-        
+
         // Check percentiles
         let p50 = hist.percentile(0.5);
         let p99 = hist.percentile(0.99);
-        
+
         assert!(p50.as_micros() >= 45 && p50.as_micros() <= 55);
         assert!(p99.as_micros() >= 95 && p99.as_micros() <= 100);
     }
-    
+
     #[test]
     fn test_computed_metrics() {
         let metrics = Metrics::new();
-        
+
         // Test read hit rate
         metrics.reads_total.add(100);
         metrics.reads_hits.add(80);
         metrics.reads_misses.add(20);
         assert_eq!(metrics.read_hit_rate(), 0.8);
         assert!((metrics.read_miss_rate() - 0.2).abs() < 0.0001);
-        
+
         // Test compaction savings
         metrics.compaction_bytes_in.add(1000);
         metrics.compaction_bytes_out.add(300);
         assert_eq!(metrics.compaction_space_savings(), 0.7);
     }
-    
+
     #[test]
     fn test_concurrent_counter() {
         let counter = Arc::new(Counter::new());
         let mut handles = vec![];
-        
+
         for _ in 0..10 {
             let counter = Arc::clone(&counter);
             handles.push(thread::spawn(move || {
@@ -503,11 +508,11 @@ mod tests {
                 }
             }));
         }
-        
+
         for handle in handles {
             handle.join().unwrap();
         }
-        
+
         assert_eq!(counter.get(), 10_000);
     }
 }

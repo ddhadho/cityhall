@@ -2,12 +2,12 @@
 //!
 //! Provides persistent, immutable, sorted storage for key-value pairs.
 
-pub mod format;
 pub mod block;
 pub mod bloom;
-pub mod writer;
+pub mod format;
 pub mod reader;
+pub mod writer;
 
+pub use format::DEFAULT_BLOCK_SIZE;
+pub use reader::SsTableReader;
 pub use writer::SsTableWriter;
-pub use reader::SsTableReader; 
-pub use format::DEFAULT_BLOCK_SIZE; 

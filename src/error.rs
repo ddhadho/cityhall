@@ -4,22 +4,25 @@ use thiserror::Error;
 pub enum StorageError {
     #[error("IO error: {0}")]
     Io(#[from] std::io::Error),
-    
+
     #[error("Corrupted data: {0}")]
     Corruption(String),
-    
+
     #[error("Corrupted data: {0}")]
-    CorruptedData(String), 
-    
+    CorruptedData(String),
+
     #[error("Invalid format: {0}")]
     InvalidFormat(String),
-    
+
+    #[error("Resource not found: {0}")]
+    NotFound(String),
+
     #[error("Key not found")]
     KeyNotFound,
-    
+
     #[error("Channel send error: {0}")]
     ChannelSend(String),
-    
+
     #[error("System time error: {0}")]
     SystemTime(String),
 }

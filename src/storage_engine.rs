@@ -1,12 +1,12 @@
-use crate::{Entry, Result, Wal, MemTable};
-use crate::sstable::{SsTableWriter, SsTableReader};
-use crate::metrics::metrics;
 use crate::compaction::{compact_sstables, select_sstables_for_compaction};
+use crate::metrics::metrics;
+use crate::sstable::{SsTableReader, SsTableWriter};
+use crate::{Entry, MemTable, Result, Wal};
+use crossbeam::channel::{self, Receiver, Sender};
 use std::path::PathBuf;
-use std::time::{SystemTime, Instant, Duration};
 use std::sync::atomic::{AtomicU64, Ordering};
-use crossbeam::channel::{self, Sender, Receiver};
 use std::thread;
+use std::time::{Duration, Instant, SystemTime};
 
 const DEFAULT_BLOCK_SIZE: usize = 16 * 1024;
 
@@ -22,7 +22,7 @@ enum FlushMessage {
 
 /// Result from background flush
 struct FlushResult {
-#[allow(dead_code)]
+    #[allow(dead_code)]
     sstable_id: u64,
     path: PathBuf,
 }
@@ -140,11 +140,18 @@ impl StorageEngine {
         self
     }
 
-    fn spawn_flush_thread(rx: Receiver<FlushMessage>, result_tx: Sender<FlushResult>) -> thread::JoinHandle<()> {
+    fn spawn_flush_thread(
+        rx: Receiver<FlushMessage>,
+        result_tx: Sender<FlushResult>,
+    ) -> thread::JoinHandle<()> {
         thread::spawn(move || {
             while let Ok(msg) = rx.recv() {
                 match msg {
-                    FlushMessage::Flush { memtable, path, sstable_id } => {
+                    FlushMessage::Flush {
+                        memtable,
+                        path,
+                        sstable_id,
+                    } => {
                         if let Err(e) = Self::flush_memtable_to_disk(memtable, &path) {
                             eprintln!("Background flush FAILED: {}", e);
                         } else {
@@ -159,24 +166,25 @@ impl StorageEngine {
 
     fn flush_memtable_to_disk(memtable: MemTable, path: &PathBuf) -> Result<()> {
         let start = Instant::now();
-        
-        if memtable.is_empty() { return Ok(()); }
+
+        if memtable.is_empty() {
+            return Ok(());
+        }
         let mut writer = SsTableWriter::new(path.clone(), DEFAULT_BLOCK_SIZE)?;
         for (key, value, timestamp) in memtable.entries_with_timestamps() {
             writer.add(&key, &value, timestamp)?;
         }
         writer.finish()?;
-        
+
         // Track flush
         metrics().flushes_total.inc();
         metrics().flush_duration.observe(start.elapsed());
         metrics().sstable_count.inc();
-        
+
         // Note: disk usage updated by caller
-        
+
         Ok(())
     }
-
 
     pub fn put(&mut self, key: Vec<u8>, value: Vec<u8>) -> Result<()> {
         let start = Instant::now();
@@ -185,13 +193,19 @@ impl StorageEngine {
         metrics().writes_total.inc();
         metrics().writes_bytes.add((key.len() + value.len()) as u64);
 
-        let timestamp = SystemTime::now().duration_since(SystemTime::UNIX_EPOCH)?.as_secs();
-        let entry = Entry { key: key.clone(), value: value.clone(), timestamp };
+        let timestamp = SystemTime::now()
+            .duration_since(SystemTime::UNIX_EPOCH)?
+            .as_secs();
+        let entry = Entry {
+            key: key.clone(),
+            value: value.clone(),
+            timestamp,
+        };
         self.wal.append(&entry)?;
-        
+
         // Update WAL size metric after append (add this line!)
         metrics().wal_size_bytes.set(self.wal.size()?);
-        
+
         self.check_and_compact()?;
 
         let is_full = self.memtable.put(key, value, timestamp)?;
@@ -204,7 +218,9 @@ impl StorageEngine {
         }
 
         // Update memtable metrics
-        metrics().memtable_size_bytes.set(self.memtable.size_bytes() as u64);
+        metrics()
+            .memtable_size_bytes
+            .set(self.memtable.size_bytes() as u64);
         metrics().memtable_entries.set(self.memtable.len() as u64);
 
         // Record latency
@@ -227,17 +243,24 @@ impl StorageEngine {
             return self.flush_memtable_sync();
         }
 
-        let old_memtable = std::mem::replace(&mut self.memtable, MemTable::new(self.memtable_max_size));
+        let old_memtable =
+            std::mem::replace(&mut self.memtable, MemTable::new(self.memtable_max_size));
         let sstable_id = self.sstable_counter.fetch_add(1, Ordering::SeqCst);
         let sstable_path = self.data_dir.join(format!("{:06}.sst", sstable_id));
 
         let entries_clone = old_memtable.entries_with_timestamps().clone();
         let mut immutable = MemTable::new(self.memtable_max_size);
-        for (k, v, ts) in entries_clone { let _ = immutable.put(k, v, ts); }
+        for (k, v, ts) in entries_clone {
+            let _ = immutable.put(k, v, ts);
+        }
         self.immutable_memtable = Some(immutable);
 
         if let Some(ref tx) = self.flush_tx {
-            tx.send(FlushMessage::Flush { memtable: old_memtable, path: sstable_path, sstable_id })?;
+            tx.send(FlushMessage::Flush {
+                memtable: old_memtable,
+                path: sstable_path,
+                sstable_id,
+            })?;
         }
         Ok(())
     }
@@ -250,33 +273,36 @@ impl StorageEngine {
                 results.push(result);
             }
         }
-        
+
         // Process results without holding any borrows
         for result in results {
             let reader = SsTableReader::open(result.path)?;
             self.sstables.push(reader);
             self.immutable_memtable = None;
-            
+
             // ✅ NEW: Clean up WAL after successful flush
             self.cleanup_wal_after_flush()?;
-            
+
             self.update_disk_usage();
         }
-        
+
         Ok(())
     }
 
     fn flush_memtable_sync(&mut self) -> Result<()> {
-        if self.memtable.is_empty() { return Ok(()); }
+        if self.memtable.is_empty() {
+            return Ok(());
+        }
         let sstable_id = self.sstable_counter.fetch_add(1, Ordering::SeqCst);
         let sstable_path = self.data_dir.join(format!("{:06}.sst", sstable_id));
-        let memtable_to_flush = std::mem::replace(&mut self.memtable, MemTable::new(self.memtable_max_size));
+        let memtable_to_flush =
+            std::mem::replace(&mut self.memtable, MemTable::new(self.memtable_max_size));
         Self::flush_memtable_to_disk(memtable_to_flush, &sstable_path)?;
         self.sstables.push(SsTableReader::open(sstable_path)?);
-        
+
         // ✅ NEW: Clean up WAL after successful flush
         self.cleanup_wal_after_flush()?;
-        
+
         self.update_disk_usage();
         Ok(())
     }
@@ -284,20 +310,23 @@ impl StorageEngine {
     /// ✅ NEW: WAL cleanup helper method
     fn cleanup_wal_after_flush(&mut self) -> Result<()> {
         println!("\n🧹 Starting WAL cleanup after flush...");
-        
+
         // Mark current segment as flushed
         self.wal.mark_flushed()?;
-        
+
         // Clean up old segments
-        self.wal.cleanup_old_segments()?;
-        
+        self.wal.cleanup_old_segments(0)?;
+
         // Update WAL metrics
         if let Ok(wal_size) = self.wal.size() {
             metrics().wal_size_bytes.set(wal_size);
-            println!("📊 Updated WAL size metric: {} bytes ({} MB)", 
-                     wal_size, wal_size / 1_048_576);
+            println!(
+                "📊 Updated WAL size metric: {} bytes ({} MB)",
+                wal_size,
+                wal_size / 1_048_576
+            );
         }
-        
+
         Ok(())
     }
 
@@ -358,8 +387,8 @@ impl StorageEngine {
         for sstable in self.sstables.iter_mut() {
             results.extend(sstable.scan(start, end)?);
         }
-        results.sort_by(|a,b| a.0.cmp(&b.0).then(b.2.cmp(&a.2)));
-        results.dedup_by(|a,b| a.0 == b.0);
+        results.sort_by(|a, b| a.0.cmp(&b.0).then(b.2.cmp(&a.2)));
+        results.dedup_by(|a, b| a.0 == b.0);
         Ok(results)
     }
 
@@ -368,13 +397,17 @@ impl StorageEngine {
             memtable_entries: self.memtable.len(),
             memtable_bytes: self.memtable.size_bytes(),
             num_sstables: self.sstables.len(),
-            immutable_memtable_entries: self.immutable_memtable.as_ref().map(|m| m.len()).unwrap_or(0),
+            immutable_memtable_entries: self
+                .immutable_memtable
+                .as_ref()
+                .map(|m| m.len())
+                .unwrap_or(0),
         }
     }
 
     fn update_disk_usage(&mut self) {
         let mut total = 0u64;
-        
+
         for sstable in &self.sstables {
             // Get file size from filesystem
             let info = sstable.info();
@@ -382,14 +415,14 @@ impl StorageEngine {
                 total += metadata.len();
             }
         }
-        
+
         // Add WAL size
         if let Ok(wal_size) = self.wal.size() {
             total += wal_size;
             // Update WAL metric
             metrics().wal_size_bytes.set(wal_size);
         }
-        
+
         metrics().disk_usage_bytes.set(total);
     }
 
@@ -411,10 +444,16 @@ impl StorageEngine {
             .filter(|p| p.extension().and_then(|s| s.to_str()) == Some("sst"))
             .collect();
 
-        println!("🔍 Compaction check: {} SSTables found", sstable_paths.len());
+        println!(
+            "🔍 Compaction check: {} SSTables found",
+            sstable_paths.len()
+        );
 
         if sstable_paths.len() < 4 {
-            println!("⏭️  Skipping: need 4+ SSTables (have {})", sstable_paths.len());
+            println!(
+                "⏭️  Skipping: need 4+ SSTables (have {})",
+                sstable_paths.len()
+            );
             return Ok(());
         }
 
@@ -425,7 +464,10 @@ impl StorageEngine {
             return Ok(());
         }
 
-        println!("🔧 Compaction needed: {} SSTables selected", to_compact.len());
+        println!(
+            "🔧 Compaction needed: {} SSTables selected",
+            to_compact.len()
+        );
 
         self.compact_sstables_sync(to_compact)?;
 
@@ -436,15 +478,21 @@ impl StorageEngine {
         println!("🗜️  Starting compaction of {} SSTables", input_paths.len());
 
         let sstable_id = self.sstable_counter.fetch_add(1, Ordering::SeqCst);
-        let output_path = self.data_dir.join(format!("{:06}_compacted.sst", sstable_id));
+        let output_path = self
+            .data_dir
+            .join(format!("{:06}_compacted.sst", sstable_id));
 
         let stats = compact_sstables(&input_paths, output_path.clone())?;
         let new_reader = SsTableReader::open(output_path)?;
 
         let before_count = self.sstables.len();
-        self.sstables.retain(|reader| !input_paths.contains(&reader.info().path));
+        self.sstables
+            .retain(|reader| !input_paths.contains(&reader.info().path));
         let after_count = self.sstables.len();
-        println!("📊 Removed {} old SSTables from list", before_count - after_count);
+        println!(
+            "📊 Removed {} old SSTables from list",
+            before_count - after_count
+        );
 
         self.sstables.push(new_reader);
         println!("➕ Added compacted SSTable to list");
@@ -456,9 +504,11 @@ impl StorageEngine {
             }
         }
 
-        println!("✅ Compaction complete: {} → 1 SSTable, saved {}%", 
-                 stats.input_sstables,
-                 ((stats.input_bytes - stats.output_bytes) * 100 / stats.input_bytes));
+        println!(
+            "✅ Compaction complete: {} → 1 SSTable, saved {}%",
+            stats.input_sstables,
+            ((stats.input_bytes - stats.output_bytes) * 100 / stats.input_bytes)
+        );
 
         Ok(())
     }
@@ -487,7 +537,7 @@ impl StorageEngine {
     pub fn metrics(&self) -> String {
         crate::metrics::metrics().summary()
     }
-    
+
     /// Print metrics to stdout
     pub fn print_metrics(&mut self) {
         self.update_disk_usage();
