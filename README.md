@@ -74,7 +74,7 @@ CityHall now supports leader-replica replication for multi-site deployments.
 
 ### Coming Soon 
 🚧 Network protocol (TCP-based)  
-🚧 Leader replication server  
+🚧 Leader replication server  1
 🚧 Replica sync agent  
 🚧 Automatic catch-up after downtime  
 
