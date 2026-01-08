@@ -66,6 +66,7 @@ Client CLI → Daemon (TCP) → Active MemTable → Immutable MemTable → SSTab
 CityHall now supports leader-replica replication for multi-site deployments.
 
 ### Current Status 
+
 ✅ Segment-based replication architecture  
 ✅ Replica state tracking and persistence  
 ✅ WAL segment reading APIs  
