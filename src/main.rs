@@ -2,12 +2,13 @@ use clap::{Parser, Subcommand};
 use std::env;
 use std::path::PathBuf;
 use std::sync::Arc;
+use parking_lot::RwLock;
 
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 use tokio::net::{TcpListener, TcpStream};
 use tokio::sync::Mutex;
 
-use cityhall::{Result, StorageEngine};
+use cityhall::{Result, StorageEngine, Wal};
 
 #[derive(Parser)]
 #[command(author, version, about, long_about = None)]
@@ -70,7 +71,13 @@ async fn main() -> Result<()> {
             println!("Starting CityHall server on {}...", bind_addr);
             println!("Using database path: {:?}", db_path);
 
-            let engine = StorageEngine::new(db_path, memtable_max_size)?;
+            // Create WAL first
+            let wal_path = db_path.join("data.wal");
+            let wal = Wal::new(&wal_path, 64 * 1024)?; // 64KB buffer
+            let wal = Arc::new(RwLock::new(wal));
+
+            // Now create StorageEngine with the WAL
+            let engine = StorageEngine::new(db_path, memtable_max_size, wal)?;
             let engine = Arc::new(Mutex::new(engine));
 
             let listener = TcpListener::bind(bind_addr).await.unwrap();
