@@ -7,6 +7,8 @@ use std::path::PathBuf;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::thread;
 use std::time::{Duration, Instant, SystemTime};
+use std::sync::Arc;
+use parking_lot::RwLock;
 
 const DEFAULT_BLOCK_SIZE: usize = 16 * 1024;
 
@@ -28,7 +30,7 @@ struct FlushResult {
 }
 
 pub struct StorageEngine {
-    wal: Wal,
+    wal: Arc<RwLock<Wal>>,
     memtable: MemTable,
     immutable_memtable: Option<MemTable>,
     sstables: Vec<SsTableReader>,
@@ -57,20 +59,20 @@ pub struct EngineStats {
 
 impl StorageEngine {
     /// Create new StorageEngine with background flush enabled
-    pub fn new(dir: PathBuf, memtable_max_size: usize) -> Result<Self> {
-        Self::new_with_config(dir, memtable_max_size, true)
+    pub fn new(dir: PathBuf, memtable_max_size: usize, wal: Arc<RwLock<Wal>>) -> Result<Self> {
+        Self::new_with_config(dir, memtable_max_size, wal, true)
     }
 
     /// Full constructor with configurable background flush
     pub fn new_with_config(
         dir: PathBuf,
         memtable_max_size: usize,
+        wal: Arc<RwLock<Wal>>,
         background_flush: bool,
     ) -> Result<Self> {
         std::fs::create_dir_all(&dir)?;
 
         let wal_path = dir.join("data.wal");
-        let wal = Wal::new(&wal_path, 8192)?;
 
         let entries = Wal::recover(&wal_path)?;
         let mut memtable = MemTable::new(memtable_max_size);
@@ -201,10 +203,13 @@ impl StorageEngine {
             value: value.clone(),
             timestamp,
         };
-        self.wal.append(&entry)?;
 
-        // Update WAL size metric after append (add this line!)
-        metrics().wal_size_bytes.set(self.wal.size()?);
+        // ✅ Lock WAL, append, unlock
+        {
+            let mut wal_lock = self.wal.write();
+            wal_lock.append(&entry)?;
+            metrics().wal_size_bytes.set(wal_lock.size()?);
+        } // Lock released here
 
         self.check_and_compact()?;
 
@@ -311,14 +316,17 @@ impl StorageEngine {
     fn cleanup_wal_after_flush(&mut self) -> Result<()> {
         println!("\n🧹 Starting WAL cleanup after flush...");
 
+        // ✅ Lock WAL for all operations
+        let mut wal_lock = self.wal.write();
+        
         // Mark current segment as flushed
-        self.wal.mark_flushed()?;
+        wal_lock.mark_flushed()?;
 
         // Clean up old segments
-        self.wal.cleanup_old_segments(0)?;
+        wal_lock.cleanup_old_segments(0)?;
 
         // Update WAL metrics
-        if let Ok(wal_size) = self.wal.size() {
+        if let Ok(wal_size) = wal_lock.size() {
             metrics().wal_size_bytes.set(wal_size);
             println!(
                 "📊 Updated WAL size metric: {} bytes ({} MB)",
@@ -326,6 +334,8 @@ impl StorageEngine {
                 wal_size / 1_048_576
             );
         }
+        
+        drop(wal_lock); // Release lock
 
         Ok(())
     }
@@ -417,11 +427,14 @@ impl StorageEngine {
         }
 
         // Add WAL size
-        if let Ok(wal_size) = self.wal.size() {
-            total += wal_size;
-            // Update WAL metric
-            metrics().wal_size_bytes.set(wal_size);
-        }
+        // ✅ Lock WAL to read size
+        {
+            let wal_lock = self.wal.read();
+            if let Ok(wal_size) = wal_lock.size() {
+                total += wal_size;
+                metrics().wal_size_bytes.set(wal_size);
+            }
+        } // Lock released
 
         metrics().disk_usage_bytes.set(total);
     }
