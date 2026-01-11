@@ -4,8 +4,10 @@
 // Run with: cargo test test_metrics_validation -- --nocapture
 
 use cityhall::metrics::metrics;
-use cityhall::StorageEngine;
+use cityhall::{StorageEngine, Wal};
 use tempfile::tempdir;
+use std::sync::Arc;
+use parking_lot::RwLock;
 
 #[test]
 fn test_metrics_validation() {
@@ -14,11 +16,11 @@ fn test_metrics_validation() {
     println!("╚═══════════════════════════════════════════════════════════╝\n");
 
     let dir = tempdir().unwrap();
-    let mut engine = StorageEngine::new(
-        dir.path().to_path_buf(),
-        1024 * 1024, // 1MB memtable
-    )
-    .unwrap();
+    let path = dir.path().to_path_buf();
+    let wal_path = path.join("test.wal");
+    let wal = Wal::new(&wal_path, 1024).unwrap();
+    let wal = Arc::new(RwLock::new(wal));
+    let mut engine = StorageEngine::new(path, 1024 * 1024, wal).unwrap();
     metrics().reset();
 
     // ========================================================================
