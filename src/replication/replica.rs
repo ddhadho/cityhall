@@ -1,6 +1,7 @@
-//! Replication Agent (Replica Side) - Enhanced with Error Handling
+//! Replication Agent (Replica Side) - Enhanced with Segment Discovery
 //!
 //! Syncs WAL segments from leader to replica with robust error handling:
+//! - Segment discovery to find available segments
 //! - Exponential backoff for retries
 //! - Configurable timeouts
 //! - Auto-reconnect on failures
@@ -155,7 +156,7 @@ impl ReplicationAgent {
     
     /// Run sync loop (runs indefinitely with error handling)
     pub async fn run(&mut self) -> Result<()> {
-        println!("🔄 Starting sync loop with error handling");
+        println!("🔄 Starting sync loop with segment discovery");
         println!("   Backoff: 1s → 60s (exponential)");
         println!("   Max consecutive failures: {}", self.max_consecutive_failures);
         
@@ -207,7 +208,7 @@ impl ReplicationAgent {
     }
     
     async fn connect_with_timeout(&self) -> Result<TcpStream> {
-        self.metrics.record_connection_attempt();  // NEW
+        self.metrics.record_connection_attempt();
         
         let connect_future = TcpStream::connect(&self.leader_addr);
         
@@ -234,17 +235,97 @@ impl ReplicationAgent {
     }
     
     /// Perform single sync operation with an established connection
+    /// NOW WITH SMART SEGMENT DISCOVERY!
     async fn sync_once_with_stream(&mut self, stream: &mut TcpStream) -> Result<bool> {
-        let next_segment = self.state.next_segment_to_sync();
-
-        self.metrics.record_sync_attempt(); 
-        
-        println!("🔄 Syncing segment {} from {}", next_segment, self.leader_addr);
-        
-        // Send request with timeout
-        let request = SyncRequest::GetSegment {
-            segment_number: next_segment,
+        // STEP 1: Ask leader what segments are available
+        let (available_segments, current_segment) = match self.fetch_segment_list(stream).await {
+            Ok(list) => list,
+            Err(e) => {
+                eprintln!("⚠️  Could not fetch segment list: {}", e);
+                // Fall back to old behavior (try next segment blindly)
+                return self.fetch_and_apply_segment(stream, self.state.next_segment_to_sync()).await;
+            }
         };
+        
+        println!("📋 Leader has {} closed segments, current segment: {}", 
+                 available_segments.len(), current_segment);
+        
+        if !available_segments.is_empty() {
+            println!("   Closed segments: {:?}", available_segments);
+        }
+        
+        // STEP 2: Find the next segment we should sync
+        let next_segment = self.state.next_segment_to_sync();
+        
+        // STEP 3: Check if we're asking for a segment that doesn't exist yet
+        if available_segments.is_empty() {
+            println!("⏸️  Leader has no closed segments yet (current active: {})", current_segment);
+            return Ok(false);
+        }
+        
+        // STEP 4: Determine which segment to sync
+        let target_segment = if available_segments.contains(&next_segment) {
+            // Perfect - the segment we want is available
+            next_segment
+        } else if let Some(&first_available) = available_segments.first() {
+            if next_segment < first_available {
+                // We're behind - segments were deleted, jump forward
+                println!("⚠️  Segment {} already deleted, jumping to {}", 
+                         next_segment, first_available);
+                first_available
+            } else {
+                // We're ahead - segment not closed yet
+                println!("⏸️  Segment {} not available yet (still active or doesn't exist)", 
+                         next_segment);
+                println!("   Current active segment: {}", current_segment);
+                return Ok(false);
+            }
+        } else {
+            // No segments available (shouldn't happen, but handle it)
+            return Ok(false);
+        };
+        
+        // STEP 5: Fetch the target segment
+        self.fetch_and_apply_segment(stream, target_segment).await
+    }
+    
+    /// Helper: Fetch segment list from leader
+    async fn fetch_segment_list(&self, stream: &mut TcpStream) -> Result<(Vec<u64>, u64)> {
+        let request = SyncRequest::ListSegments;
+        
+        timeout(
+            self.config.write_timeout,
+            send_request(stream, &request)
+        )
+        .await
+        .map_err(|_| StorageError::Timeout("Write timeout fetching segment list".into()))??;
+        
+        let response = timeout(
+            self.config.read_timeout,
+            recv_response(stream)
+        )
+        .await
+        .map_err(|_| StorageError::Timeout("Read timeout fetching segment list".into()))??
+        .ok_or(StorageError::ConnectionClosed)?;
+        
+        match response {
+            SyncResponse::SegmentList { segments, current_segment } => {
+                Ok((segments, current_segment))
+            }
+            SyncResponse::Error { message } => {
+                Err(StorageError::LeaderError(message))
+            }
+            _ => Err(StorageError::UnexpectedResponse)
+        }
+    }
+    
+    /// Helper: Fetch and apply a specific segment
+    async fn fetch_and_apply_segment(&mut self, stream: &mut TcpStream, segment_number: u64) -> Result<bool> {
+        println!("🔄 Syncing segment {} from {}", segment_number, self.leader_addr);
+        
+        self.metrics.record_sync_attempt();
+        
+        let request = SyncRequest::GetSegment { segment_number };
         
         timeout(
             self.config.write_timeout,
@@ -253,7 +334,6 @@ impl ReplicationAgent {
         .await
         .map_err(|_| StorageError::Timeout("Write timeout".into()))??;
         
-        // Receive response with timeout
         let response = timeout(
             self.config.read_timeout,
             recv_response(stream)
@@ -262,9 +342,16 @@ impl ReplicationAgent {
         .map_err(|_| StorageError::Timeout("Read timeout".into()))??
         .ok_or(StorageError::ConnectionClosed)?;
         
-        // Process response
         match response {
             SyncResponse::SegmentData { segment_number, entries } => {
+                if entries.is_empty() {
+                    println!("⚠️  Segment {} is empty, skipping", segment_number);
+                    // Still update state so we don't get stuck
+                    self.state.update_synced_segment(segment_number, 0)?;
+                    self.state.save(&self.state_path)?;
+                    return Ok(false);
+                }
+                
                 println!(
                     "📥 Received segment {} ({} entries, ~{} KB)",
                     segment_number,
@@ -285,7 +372,7 @@ impl ReplicationAgent {
             }
             SyncResponse::SegmentNotFound { segment_number } => {
                 println!(
-                    "⚠️  Segment {} not found on leader (may be deleted or still active)",
+                    "⚠️  Segment {} not found on leader",
                     segment_number
                 );
                 Ok(false)
@@ -306,7 +393,6 @@ impl ReplicationAgent {
         self.connection_state = ConnectionState::Connected;
 
         self.health.record_success();
-        // metrics updated in sync_once_with_stream
     }
     
     /// Handle sync failure with backoff
@@ -343,7 +429,6 @@ impl ReplicationAgent {
         );
         
         // Apply backoff (but don't block the normal sync interval)
-        // The caller will handle the sync_interval sleep
         if wait > self.config.sync_interval {
             sleep(wait - self.config.sync_interval).await;
         }
@@ -368,9 +453,6 @@ impl ReplicationAgent {
     }
     
     /// Perform a single sync operation (public API for manual sync)
-    /// 
-    /// This method tracks failures and updates connection state,
-    /// making it suitable for testing and manual sync triggers.
     pub async fn sync_once(&mut self) -> Result<bool> {
         self.connection_state = ConnectionState::Retrying;
         
@@ -378,32 +460,29 @@ impl ReplicationAgent {
             Ok(mut stream) => {
                 match self.sync_once_with_stream(&mut stream).await {
                     Ok(result) => {
-                        // Success - reset failure tracking
                         self.on_sync_success();
                         Ok(result)
                     }
                     Err(e) => {
-                        // Sync failed - track failure
                         self.consecutive_failures += 1;
                         if self.consecutive_failures >= self.max_consecutive_failures {
                             self.connection_state = ConnectionState::Unhealthy;
                         } else {
                             self.connection_state = ConnectionState::Retrying;
                         }
-                        self.backoff.next(); // Increment backoff attempts
+                        self.backoff.next();
                         Err(e)
                     }
                 }
             }
             Err(e) => {
-                // Connection failed - track failure
                 self.consecutive_failures += 1;
                 if self.consecutive_failures >= self.max_consecutive_failures {
                     self.connection_state = ConnectionState::Unhealthy;
                 } else {
                     self.connection_state = ConnectionState::Retrying;
                 }
-                self.backoff.next(); // Increment backoff attempts
+                self.backoff.next();
                 Err(e)
             }
         }
@@ -437,35 +516,7 @@ impl ReplicationAgent {
     /// Request list of available segments from leader
     pub async fn list_segments(&self) -> Result<(Vec<u64>, u64)> {
         let mut stream = self.connect_with_timeout().await?;
-        
-        let request = SyncRequest::ListSegments;
-        
-        timeout(
-            self.config.write_timeout,
-            send_request(&mut stream, &request)
-        )
-        .await
-        .map_err(|_| StorageError::Timeout("Write timeout".into()))??;
-        
-        let response = timeout(
-            self.config.read_timeout,
-            recv_response(&mut stream)
-        )
-        .await
-        .map_err(|_| StorageError::Timeout("Read timeout".into()))??
-        .ok_or(StorageError::ConnectionClosed)?;
-        
-        match response {
-            SyncResponse::SegmentList { segments, current_segment } => {
-                Ok((segments, current_segment))
-            }
-            SyncResponse::Error { message } => {
-                Err(StorageError::LeaderError(message))
-            }
-            _ => {
-                Err(StorageError::UnexpectedResponse)
-            }
-        }
+        self.fetch_segment_list(&mut stream).await
     }
 
     pub fn set_max_consecutive_failures(&mut self, n: u32) {
@@ -503,6 +554,7 @@ Last synced segment: {}",
         )
     }
 }
+
 
 /// Estimate size of entries in KB (for logging)
 fn estimate_size_kb(entries: &[Entry]) -> usize {
@@ -572,7 +624,7 @@ mod tests {
         // Simulate failures
         for i in 1..=5 {
             agent.consecutive_failures = i;
-            assert!(agent.is_healthy()); // Still healthy
+            assert!(agent.is_healthy());
         }
         
         // Exceed threshold

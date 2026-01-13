@@ -2,11 +2,13 @@
 // Final verification of all WAL cleanup requirements
 
 use cityhall::metrics::metrics;
-use cityhall::StorageEngine;
+use cityhall::{StorageEngine, Wal};
 use std::fs;
 use std::thread;
 use std::time::Duration;
 use tempfile::tempdir;
+use std::sync::Arc;
+use parking_lot::RwLock;
 
 #[test]
 fn test_wal_success_criteria() {
@@ -20,7 +22,11 @@ fn test_wal_success_criteria() {
     // ✅ Criterion 1: WAL rotates to new segment at 100MB
     println!("✓ Testing Criterion 1: WAL segment rotation at 100MB");
     {
-        let mut engine = StorageEngine::new(dir.path().to_path_buf(), memtable_size).unwrap();
+        let path = dir.path().to_path_buf();
+        let wal_path = path.join("test.wal");
+        let wal = Wal::new(&wal_path, 1024).unwrap();
+        let wal = Arc::new(RwLock::new(wal));
+        let mut engine = StorageEngine::new(path.clone(), memtable_size, wal).unwrap();
         metrics().reset();
 
         // Write ~120MB to force rotation
@@ -30,7 +36,7 @@ fn test_wal_success_criteria() {
                 .unwrap();
         }
 
-        let wal_segments_dir = dir.path().join("wal_segments");
+        let wal_segments_dir = path.join("wal_segments");
         let segment_count = fs::read_dir(&wal_segments_dir)
             .unwrap()
             .filter_map(|e| e.ok())
@@ -49,7 +55,11 @@ fn test_wal_success_criteria() {
     println!("\n✓ Testing Criterion 2: Old segments deleted after flush");
     {
         let dir = tempdir().unwrap();
-        let mut engine = StorageEngine::new(dir.path().to_path_buf(), memtable_size).unwrap();
+        let path = dir.path().to_path_buf();
+        let wal_path = path.join("test.wal");
+        let wal = Wal::new(&wal_path, 1024).unwrap();
+        let wal = Arc::new(RwLock::new(wal));
+        let mut engine = StorageEngine::new(path.clone(), memtable_size, wal).unwrap();
 
         // Write enough to create multiple segments (120MB)
         for i in 0..60_000 {
@@ -58,7 +68,7 @@ fn test_wal_success_criteria() {
                 .unwrap();
         }
 
-        let segments_before = count_wal_segments(dir.path());
+        let segments_before = count_wal_segments(&path);
         println!("  Segments before flush: {}", segments_before);
 
         // Now write enough to fill memtable and trigger flush
@@ -74,7 +84,7 @@ fn test_wal_success_criteria() {
         thread::sleep(Duration::from_millis(500));
         engine.check_and_compact().unwrap();
 
-        let segments_after = count_wal_segments(dir.path());
+        let segments_after = count_wal_segments(&path);
         println!("  Segments after flush: {}", segments_after);
 
         assert!(
@@ -93,7 +103,11 @@ fn test_wal_success_criteria() {
     println!("\n✓ Testing Criterion 3: WAL size bounded");
     {
         let dir = tempdir().unwrap();
-        let mut engine = StorageEngine::new(dir.path().to_path_buf(), memtable_size).unwrap();
+        let path = dir.path().to_path_buf();
+        let wal_path = path.join("test.wal");
+        let wal = Wal::new(&wal_path, 1024).unwrap();
+        let wal = Arc::new(RwLock::new(wal));
+        let mut engine = StorageEngine::new(path.clone(), memtable_size, wal).unwrap();
         metrics().reset();
 
         // Write 500MB of data with periodic flushes
@@ -128,10 +142,14 @@ fn test_wal_success_criteria() {
     println!("\n✓ Testing Criterion 4: Recovery after cleanup");
     {
         let dir = tempdir().unwrap();
+        let dir_path = dir.path().to_path_buf();
 
         // Write, flush (cleanup), write more
         {
-            let mut engine = StorageEngine::new(dir.path().to_path_buf(), memtable_size).unwrap();
+            let wal_path = dir_path.join("test.wal");
+            let wal = Wal::new(&wal_path, 1024).unwrap();
+            let wal = Arc::new(RwLock::new(wal));
+            let mut engine = StorageEngine::new(dir_path.clone(), memtable_size, wal).unwrap();
 
             for i in 0..5_000 {
                 engine
@@ -158,7 +176,10 @@ fn test_wal_success_criteria() {
 
         // Recover
         {
-            let mut engine = StorageEngine::new(dir.path().to_path_buf(), memtable_size).unwrap();
+            let wal_path = dir_path.join("test.wal");
+            let wal = Wal::new(&wal_path, 1024).unwrap();
+            let wal = Arc::new(RwLock::new(wal));
+            let mut engine = StorageEngine::new(dir_path.clone(), memtable_size, wal).unwrap();
 
             let mut recovered = 0;
             for i in 5_000..10_000 {
@@ -187,7 +208,11 @@ fn test_wal_success_criteria() {
     println!("\n✓ Testing Criterion 5: Metrics accuracy");
     {
         let dir = tempdir().unwrap();
-        let mut engine = StorageEngine::new(dir.path().to_path_buf(), memtable_size).unwrap();
+        let path = dir.path().to_path_buf();
+        let wal_path = path.join("test.wal");
+        let wal = Wal::new(&wal_path, 1024).unwrap();
+        let wal = Arc::new(RwLock::new(wal));
+        let mut engine = StorageEngine::new(path.clone(), memtable_size, wal).unwrap();
         metrics().reset();
 
         for i in 0..10_000 {
@@ -197,7 +222,7 @@ fn test_wal_success_criteria() {
         }
 
         let metric_size = metrics().wal_size_bytes.get();
-        let actual_size = calculate_actual_wal_size(dir.path());
+        let actual_size = calculate_actual_wal_size(&path);
 
         let diff_pct =
             ((metric_size as i64 - actual_size as i64).abs() as f64 / actual_size as f64) * 100.0;

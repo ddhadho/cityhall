@@ -1,6 +1,8 @@
-use cityhall::{Result, StorageEngine};
+use cityhall::{Result, StorageEngine, Wal};
 use std::time::Instant;
 use tempfile::TempDir;
+use std::sync::Arc;
+use parking_lot::RwLock;
 
 #[test]
 #[ignore]
@@ -8,10 +10,11 @@ fn benchmark_write_latency() -> Result<()> {
     println!("\n=== Write Latency Benchmark ===\n");
 
     let temp_dir = TempDir::new()?;
-    let mut engine = StorageEngine::new(
-        temp_dir.path().to_path_buf(),
-        200, // Small memtable to trigger frequent flushes
-    )?;
+    let path = temp_dir.path().to_path_buf();
+    let wal_path = path.join("test.wal");
+    let wal = Wal::new(&wal_path, 1024)?;
+    let wal = Arc::new(RwLock::new(wal));
+    let mut engine = StorageEngine::new(path, 200, wal)?;
 
     let mut latencies = Vec::new();
 
