@@ -19,12 +19,12 @@ fn test_basic_put_and_get() -> Result<()> {
     engine.put(b"key1".to_vec(), b"value1".to_vec())?;
     engine.put(b"key2".to_vec(), b"value2".to_vec())?;
     engine.put(b"key3".to_vec(), b"value3".to_vec())?;
-    
+
     assert_eq!(engine.get(b"key1")?, Some(b"value1".to_vec()));
     assert_eq!(engine.get(b"key2")?, Some(b"value2".to_vec()));
     assert_eq!(engine.get(b"key3")?, Some(b"value3".to_vec()));
     assert_eq!(engine.get(b"nonexistent")?, None);
-    
+
     Ok(())
 }
 #[test]
@@ -208,7 +208,7 @@ fn test_sequential_time_series_workload() -> Result<()> {
 fn test_wal_memtable_integration() -> Result<()> {
     let dir = tempdir()?;
     let dir_path = dir.path().to_path_buf();
-    
+
     {
         let wal_path = dir_path.join("test.wal");
         let wal = Wal::new(&wal_path, 1024)?;
@@ -226,7 +226,7 @@ fn test_wal_memtable_integration() -> Result<()> {
             assert_eq!(engine.get(key.as_bytes())?, Some(expected.into_bytes()));
         }
     }
-    
+
     {
         let wal_path = dir_path.join("test.wal");
         let wal = Wal::new(&wal_path, 1024)?;
@@ -239,7 +239,7 @@ fn test_wal_memtable_integration() -> Result<()> {
             assert_eq!(engine.get(key.as_bytes())?, Some(expected.into_bytes()));
         }
     }
-    
+
     Ok(())
 }
 
