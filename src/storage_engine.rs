@@ -556,6 +556,11 @@ impl StorageEngine {
         self.update_disk_usage();
         println!("{}", self.metrics());
     }
+
+    /// Returns a shared reference to the WAL for use by replication
+    pub fn get_wal(&self) -> Arc<RwLock<Wal>> {
+        Arc::clone(&self.wal)
+    }
 }
 
 impl Drop for StorageEngine {
