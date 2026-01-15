@@ -1,18 +1,21 @@
 //! Leader command implementation
 //!
 //! Starts CityHall in leader mode with:
-//! - Client server for writes (existing server code)
+//! - Client server for writes/reads (using full StorageEngine)
 //! - Replication server for serving replicas
-//! - Shared WAL for both write operations and replication
+//! - Shared WAL between StorageEngine and replication
 
-use cityhall::{Result, Wal, Entry};
+use cityhall::{Result, StorageEngine};
 use cityhall::replication::ReplicationServer;
 use std::path::PathBuf;
 use std::sync::Arc;
-use parking_lot::RwLock;
+use parking_lot::Mutex;
 use tokio::signal;
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 use tokio::net::{TcpListener, TcpStream};
+
+/// Default MemTable size: 4MB
+const DEFAULT_MEMTABLE_SIZE: usize = 4 * 1024 * 1024;
 
 /// Run CityHall in leader mode
 pub async fn run_leader(
@@ -27,27 +30,40 @@ pub async fn run_leader(
     println!("🌐 Client port: {}", port);
     println!("🔄 Replication port: {}", replication_port);
     println!("💾 WAL buffer: {} bytes", wal_buffer_size);
+    println!("📊 MemTable size: {} MB", DEFAULT_MEMTABLE_SIZE / 1_048_576);
     println!();
     
     // Create data directory
     std::fs::create_dir_all(&data_dir)?;
     
-    // Initialize WAL - this is shared between client operations and replication
+    // Initialize WAL
     let wal_path = data_dir.join("wal");
-    let wal = Wal::new(&wal_path, wal_buffer_size)?;
-    let wal = Arc::new(RwLock::new(wal));
+    let wal = cityhall::Wal::new(&wal_path, wal_buffer_size)?;
+    let wal = Arc::new(parking_lot::RwLock::new(wal));
     println!("✓ WAL initialized at {:?}", wal_path);
     
-    // Start replication server
-    let replication_wal = Arc::clone(&wal);
-    let replication_server = ReplicationServer::new(replication_wal, replication_port);
+    // Create StorageEngine with shared WAL
+    let storage_engine = StorageEngine::new(
+        data_dir.clone(),
+        DEFAULT_MEMTABLE_SIZE,
+        Arc::clone(&wal),
+    )?;
+    let storage = Arc::new(Mutex::new(storage_engine));
+    println!("✓ StorageEngine initialized");
     
+    // Get WAL for replication (same instance used by StorageEngine)
+    let replication_wal = {
+        let engine = storage.lock();
+        engine.get_wal()
+    };
+    
+    // Start replication server
+    let replication_server = ReplicationServer::new(replication_wal, replication_port);
     let replication_handle = tokio::spawn(async move {
         if let Err(e) = replication_server.serve().await {
             eprintln!("❌ Replication server error: {}", e);
         }
     });
-    
     println!("✓ Replication server started on port {}", replication_port);
     
     // Start client server
@@ -59,22 +75,21 @@ pub async fn run_leader(
     println!("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━");
     println!("✅ Leader is running!");
     println!("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━");
-    println!("📝 Ready to accept writes on port {}", port);
+    println!("📝 Ready to accept reads/writes on port {}", port);
     println!("🔄 Serving replicas on port {}", replication_port);
     println!("📴 Press Ctrl+C to stop");
     println!();
     
     // Spawn client connection handler
-    let client_wal = Arc::clone(&wal);
     let client_handle = tokio::spawn(async move {
         loop {
             match listener.accept().await {
                 Ok((stream, addr)) => {
                     println!("🔗 Client connected: {}", addr);
-                    let wal = Arc::clone(&client_wal);
+                    let storage = Arc::clone(&storage);
                     
                     tokio::spawn(async move {
-                        if let Err(e) = handle_client_connection(stream, wal).await {
+                        if let Err(e) = handle_client_connection(stream, storage).await {
                             eprintln!("❌ Client connection error: {}", e);
                         }
                     });
@@ -109,11 +124,10 @@ pub async fn run_leader(
 
 /// Handle a single client connection (PUT/GET commands)
 /// 
-/// This is a simple WAL-based write handler.
-/// For production, you might want to integrate with your full StorageEngine.
+/// Now uses the full StorageEngine for both writes and reads!
 async fn handle_client_connection(
     stream: TcpStream,
-    wal: Arc<RwLock<Wal>>,
+    storage: Arc<Mutex<StorageEngine>>,
 ) -> std::io::Result<()> {
     let mut reader = BufReader::new(stream);
     let mut line = String::new();
@@ -135,40 +149,62 @@ async fn handle_client_connection(
         match *cmd {
             "PUT" => {
                 if let (Some(key), Some(value)) = (parts.get(1), parts.get(2)) {
-                    // Create entry
-                    let entry = Entry {
-                        key: key.as_bytes().to_vec(),
-                        value: value.as_bytes().to_vec(),
-                        timestamp: std::time::SystemTime::now()
-                            .duration_since(std::time::UNIX_EPOCH)
-                            .unwrap()
-                            .as_secs(),
+                    let key = key.as_bytes().to_vec();
+                    let value = value.as_bytes().to_vec();
+                    
+                    // Use StorageEngine.put() - handles WAL + MemTable + flush
+                    let result = {
+                        let mut engine = storage.lock();
+                        engine.put(key.clone(), value.clone())
                     };
                     
-                    // Prepare response while holding lock, then drop it
-                    let response = {
-                        let mut wal_lock = wal.write();
-                        match wal_lock.append(&entry) {
-                            Ok(_) => {
-                                match wal_lock.flush() {
-                                    Ok(_) => "OK\n".to_string(),
-                                    Err(e) => format!("ERROR: flush failed: {}\n", e),
-                                }
-                            }
-                            Err(e) => format!("ERROR: {}\n", e),
+                    match result {
+                        Ok(_) => {
+                            writer.write_all(b"OK\n").await?;
+                            println!("✓ PUT: {} bytes", key.len() + value.len());
                         }
-                    }; // ← Lock dropped here
-                    
-                    // Now safe to await - no lock held
-                    writer.write_all(response.as_bytes()).await?;
+                        Err(e) => {
+                            let response = format!("ERROR: {}\n", e);
+                            writer.write_all(response.as_bytes()).await?;
+                            eprintln!("❌ PUT failed: {}", e);
+                        }
+                    }
                 } else {
                     writer.write_all(b"ERROR: invalid PUT format (use: PUT key value)\n").await?;
                 }
             }
+            
             "GET" => {
-                // For simplicity, GET is not implemented in this WAL-only version
-                // In production, you'd query your LSM-tree or memtable
-                writer.write_all(b"ERROR: GET not implemented in WAL-only mode\n").await?;
+                if let Some(key) = parts.get(1) {
+                    let key = key.as_bytes();
+                    
+                    // Use StorageEngine.get() - checks MemTable + SSTables
+                    let result = {
+                        let mut engine = storage.lock();
+                        engine.get(key)
+                    };
+                    
+                    match result {
+                        Ok(Some(value)) => {
+                            // Try to convert to UTF-8, otherwise use lossy conversion
+                            let display = String::from_utf8_lossy(&value);
+                            writer.write_all(display.as_bytes()).await?;
+                            writer.write_all(b"\n").await?;
+                            println!("✓ GET: found {} bytes", value.len());
+                        }
+                        Ok(None) => {
+                            writer.write_all(b"NOT_FOUND\n").await?;
+                            println!("⚠️  GET: key not found");
+                        }
+                        Err(e) => {
+                            let response = format!("ERROR: {}\n", e);
+                            writer.write_all(response.as_bytes()).await?;
+                            eprintln!("❌ GET failed: {}", e);
+                        }
+                    }
+                } else {
+                    writer.write_all(b"ERROR: invalid GET format (use: GET key)\n").await?;
+                }
             }
             
             "" => {
@@ -176,7 +212,7 @@ async fn handle_client_connection(
             }
             
             _ => {
-                writer.write_all(b"ERROR: unknown command (supported: PUT)\n").await?;
+                writer.write_all(b"ERROR: unknown command (supported: PUT, GET)\n").await?;
             }
         }
     }
@@ -188,39 +224,90 @@ mod tests {
     use tempfile::TempDir;
     
     #[tokio::test]
-    async fn test_leader_wal_initialization() {
+    async fn test_leader_initialization() {
         let temp_dir = TempDir::new().unwrap();
         let data_dir = temp_dir.path().to_path_buf();
         
-        // Test that we can initialize the WAL for leader
+        // Initialize WAL
         let wal_path = data_dir.join("wal");
-        let wal = Wal::new(&wal_path, 1024).unwrap();
-        let wal = Arc::new(RwLock::new(wal));
+        let wal = cityhall::Wal::new(&wal_path, 1024).unwrap();
+        let wal = Arc::new(parking_lot::RwLock::new(wal));
         
-        assert!(wal_path.exists());
+        // Create StorageEngine
+        let storage_engine = StorageEngine::new(
+            data_dir.clone(),
+            DEFAULT_MEMTABLE_SIZE,
+            Arc::clone(&wal),
+        ).unwrap();
         
-        // Verify WAL is accessible and starts at segment 0
-        let wal_lock = wal.read();
-        assert_eq!(wal_lock.current_segment_number(), 0);
+        let storage = Arc::new(Mutex::new(storage_engine));
+        
+        // Verify we can perform operations
+        let mut engine = storage.lock();
+        assert!(engine.put(b"test".to_vec(), b"value".to_vec()).is_ok());
+        assert_eq!(engine.get(b"test").unwrap(), Some(b"value".to_vec()));
     }
     
     #[tokio::test]
-    async fn test_wal_write_operation() {
+    async fn test_wal_shared_with_storage_engine() {
         let temp_dir = TempDir::new().unwrap();
-        let wal_path = temp_dir.path().join("test.wal");
+        let data_dir = temp_dir.path().to_path_buf();
         
-        let wal = Wal::new(&wal_path, 1024).unwrap();
-        let wal = Arc::new(RwLock::new(wal));
+        // Initialize WAL
+        let wal_path = data_dir.join("wal");
+        let wal = cityhall::Wal::new(&wal_path, 1024).unwrap();
+        let wal = Arc::new(parking_lot::RwLock::new(wal));
         
-        // Test writing an entry
-        let entry = Entry {
-            key: b"test_key".to_vec(),
-            value: b"test_value".to_vec(),
-            timestamp: 1000,
+        // Create StorageEngine with shared WAL
+        let storage_engine = StorageEngine::new(
+            data_dir.clone(),
+            DEFAULT_MEMTABLE_SIZE,
+            Arc::clone(&wal),
+        ).unwrap();
+        
+        let storage = Arc::new(Mutex::new(storage_engine));
+        
+        // Get WAL from storage engine
+        let wal_from_engine = {
+            let engine = storage.lock();
+            engine.get_wal()
         };
         
-        let mut wal_lock = wal.write();
-        assert!(wal_lock.append(&entry).is_ok());
-        assert!(wal_lock.flush().is_ok());
+        // Verify they point to the same WAL
+        // (In Rust, Arc pointers are equal if they point to same allocation)
+        assert_eq!(Arc::strong_count(&wal), 3); // original + storage_engine + wal_from_engine
+    }
+    
+    #[tokio::test]
+    async fn test_storage_engine_put_and_get() {
+        let temp_dir = TempDir::new().unwrap();
+        let data_dir = temp_dir.path().to_path_buf();
+        
+        let wal_path = data_dir.join("wal");
+        let wal = cityhall::Wal::new(&wal_path, 1024).unwrap();
+        let wal = Arc::new(parking_lot::RwLock::new(wal));
+        
+        let storage_engine = StorageEngine::new(
+            data_dir,
+            DEFAULT_MEMTABLE_SIZE,
+            wal,
+        ).unwrap();
+        
+        let storage = Arc::new(Mutex::new(storage_engine));
+        
+        // Test PUT
+        {
+            let mut engine = storage.lock();
+            engine.put(b"key1".to_vec(), b"value1".to_vec()).unwrap();
+            engine.put(b"key2".to_vec(), b"value2".to_vec()).unwrap();
+        }
+        
+        // Test GET
+        {
+            let mut engine = storage.lock();
+            assert_eq!(engine.get(b"key1").unwrap(), Some(b"value1".to_vec()));
+            assert_eq!(engine.get(b"key2").unwrap(), Some(b"value2".to_vec()));
+            assert_eq!(engine.get(b"key3").unwrap(), None);
+        }
     }
 }
