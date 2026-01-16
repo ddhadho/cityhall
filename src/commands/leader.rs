@@ -142,7 +142,7 @@ async fn handle_client_connection(
         }
         
         let parts: Vec<&str> = line.trim().splitn(3, ' ').collect();
-        let cmd = parts.get(0).unwrap_or(&"");
+        let cmd = parts.first().unwrap_or(&"");
         
         let writer = reader.get_mut();
         

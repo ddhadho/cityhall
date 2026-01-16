@@ -3,7 +3,7 @@ use crate::metrics::metrics;
 use crate::sstable::{SsTableReader, SsTableWriter};
 use crate::{Entry, MemTable, Result, Wal};
 use crossbeam::channel::{self, Receiver, Sender};
-use std::path::PathBuf;
+use std::path::{PathBuf, Path};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::thread;
 use std::time::{Duration, Instant, SystemTime};
@@ -166,13 +166,13 @@ impl StorageEngine {
         })
     }
 
-    fn flush_memtable_to_disk(memtable: MemTable, path: &PathBuf) -> Result<()> {
+    fn flush_memtable_to_disk(memtable: MemTable, path: &Path) -> Result<()> {
         let start = Instant::now();
 
         if memtable.is_empty() {
             return Ok(());
         }
-        let mut writer = SsTableWriter::new(path.clone(), DEFAULT_BLOCK_SIZE)?;
+        let mut writer = SsTableWriter::new(path.to_path_buf(), DEFAULT_BLOCK_SIZE)?;
         for (key, value, timestamp) in memtable.entries_with_timestamps() {
             writer.add(&key, &value, timestamp)?;
         }

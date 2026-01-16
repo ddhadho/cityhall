@@ -6,9 +6,10 @@
 
 use cityhall::{Result, Wal};
 use cityhall::replication::{ReplicationAgent, ReplicationConfig, ReplicaState};
-use std::path::PathBuf;
+use std::path::{PathBuf, Path};
+use tokio::net::{TcpStream};
+use tokio::time::{sleep, timeout, Duration};
 use std::sync::Arc;
-use std::time::Duration;
 use parking_lot::RwLock;
 use tokio::signal;
 
@@ -197,7 +198,7 @@ async fn show_status_text(data_dir: &PathBuf, verbose: bool) -> Result<()> {
 }
 
 /// Show status in compact format
-async fn show_status_compact(data_dir: &PathBuf) -> Result<()> {
+async fn show_status_compact(data_dir: &Path) -> Result<()> {
     let state_path = data_dir.join("replica_state.json");
     
     if !state_path.exists() {
@@ -230,7 +231,7 @@ async fn show_status_compact(data_dir: &PathBuf) -> Result<()> {
 }
 
 /// Show status in JSON format
-async fn show_status_json(data_dir: &PathBuf, verbose: bool) -> Result<()> {
+async fn show_status_json(data_dir: &Path, verbose: bool) -> Result<()> {
     let state_path = data_dir.join("replica_state.json");
     
     if !state_path.exists() {
