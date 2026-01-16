@@ -168,7 +168,7 @@ fn merge_sstables(readers: &mut [SsTableReader], output_path: &Path) -> Result<(
     // K-way merge using min-heap
     while let Some(entry) = heap.pop() {
         // Check if this is a duplicate key
-        let is_duplicate = last_key.as_ref().map_or(false, |k| k == &entry.key);
+        let is_duplicate = last_key.as_ref() == Some(&entry.key);
 
         if !is_duplicate {
             // Write unique entry

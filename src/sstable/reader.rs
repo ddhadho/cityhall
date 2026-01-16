@@ -256,7 +256,7 @@ impl SsTableReader {
     /// with previous key, then only the differing suffix
     fn decode_block(data: &[u8]) -> Result<Vec<BlockEntry>> {
         let mut entries = Vec::new();
-        let mut cursor = &data[..];
+        let mut cursor = data;
         let mut previous_key = Vec::new();
 
         while cursor.remaining() > 0 {

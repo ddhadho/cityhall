@@ -61,30 +61,40 @@ Client CLI → Daemon (TCP) → Active MemTable → Immutable MemTable → SSTab
                                                                        ↳ Bloom Filter check (to skip I/O)
 ```
 
-## 🔄 Replication (Work in Progress)
+## 🔄 Replication
 
-CityHall now supports leader-replica replication for multi-site deployments.
-
-### Current Status 
-
-✅ Segment-based replication architecture  
-✅ Replica state tracking and persistence  
-✅ WAL segment reading APIs  
-✅ Replica-aware segment cleanup  
-
-### Coming Soon 
-🚧 Network protocol (TCP-based)  
-🚧 Leader replication server  1
-🚧 Replica sync agent  
-🚧 Automatic catch-up after downtime  
+CityHall supports leader-replica replication for high availability and read scaling. The system uses WAL-based streaming to provide eventual consistency across multiple nodes.
 
 ### Architecture
-- **Replication Model**: Leader-replica (single write leader)
-- **Consistency**: Eventual consistency
-- **Sync Method**: Pull-based (replicas poll leader)
-- **Granularity**: Segment-level (100MB chunks)
 
-See [REPLICATION_DESIGN.md](REPLICATION_DESIGN.md) for details.
+- **Model**: Single leader, multiple replicas. All writes go to the leader, which then propagates them to the replicas.
+- **Protocol**: A simple, TCP-based protocol where replicas pull WAL segments from the leader.
+- **Consistency**: Eventual consistency. Replicas are guaranteed to receive all of the leader's writes in the same order, but there may be a small lag. This model is ideal for read-heavy workloads and environments where temporary network partitions are expected.
+
+### CLI Commands
+
+You can easily start a leader or a replica using the CLI:
+
+```bash
+# Start a leader node
+./target/release/cityhall leader --data-dir /tmp/leader --replication-port 7879
+
+# Start a replica node that syncs from the leader
+./target/release/cityhall replica --leader 127.0.0.1:7879 --data-dir /tmp/replica1
+```
+
+You can check the status of a replica at any time:
+
+```bash
+# Get the status of a replica
+./target/release/cityhall replica status --data-dir /tmp/replica1
+```
+
+### Performance
+
+*(Benchmark results for replication throughput and latency will be added here.)*
+
+For a full technical breakdown of the replication design, see the [Replication Design Document](REPLICATION_DESIGN.md).
 
 ## Getting Started
 

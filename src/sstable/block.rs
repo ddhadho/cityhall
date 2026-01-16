@@ -11,6 +11,12 @@ pub struct BlockBuilder {
     entries_count: usize,
 }
 
+impl Default for BlockBuilder {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl BlockBuilder {
     pub fn new() -> Self {
         BlockBuilder {
@@ -65,7 +71,7 @@ impl BlockBuilder {
 
     /// Get the first key in this block
     pub fn first_key(&self) -> Option<&[u8]> {
-        self.first_key.as_ref().map(|k| k.as_slice())
+        self.first_key.as_deref()
     }
 
     /// Finish building and return compressed data
