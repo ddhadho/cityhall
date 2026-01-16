@@ -268,6 +268,12 @@ pub struct Counter {
     value: AtomicU64,
 }
 
+impl Default for Counter {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl Counter {
     pub fn new() -> Self {
         Self {
@@ -296,6 +302,12 @@ impl Counter {
 #[derive(Debug)]
 pub struct Gauge {
     value: AtomicU64,
+}
+
+impl Default for Gauge {
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 impl Gauge {
@@ -335,6 +347,12 @@ impl Gauge {
 pub struct Histogram {
     samples: RwLock<Vec<Duration>>,
     max_samples: usize,
+}
+
+impl Default for Histogram {
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 impl Histogram {

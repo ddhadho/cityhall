@@ -30,7 +30,7 @@ impl BloomFilter {
         let num_hash_functions = Self::optimal_num_hash_functions(expected_items, num_bits);
 
         // Allocate bit array (8 bits per byte)
-        let num_bytes = (num_bits + 7) / 8;
+        let num_bytes = num_bits.div_ceil(8);
         let bits = vec![0u8; num_bytes];
 
         BloomFilter {
@@ -147,7 +147,7 @@ impl BloomFilter {
         let bits = data[8..].to_vec();
 
         // Validate
-        let expected_bytes = (num_bits + 7) / 8;
+        let expected_bytes = num_bits.div_ceil(8);
         if bits.len() != expected_bytes {
             return Err(StorageError::InvalidFormat(format!(
                 "Bloom filter size mismatch: expected {} bytes, got {}",

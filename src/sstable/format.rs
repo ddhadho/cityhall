@@ -28,6 +28,12 @@ pub struct Header {
     pub max_timestamp: u64,
 }
 
+impl Default for Header {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl Header {
     pub fn new() -> Self {
         Header {
@@ -63,7 +69,7 @@ impl Header {
             ));
         }
 
-        let mut buf = &data[..];
+        let mut buf = data;
 
         let magic = buf.get_u32_le();
         if magic != MAGIC_NUMBER {
@@ -123,7 +129,7 @@ impl Footer {
             ));
         }
 
-        let mut buf = &data[..];
+        let mut buf = data;
 
         let index_offset = buf.get_u64_le();
         let bloom_offset = buf.get_u64_le();
