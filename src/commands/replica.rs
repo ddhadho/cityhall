@@ -6,12 +6,11 @@
 
 use cityhall::{Result, Wal};
 use cityhall::replication::{ReplicationAgent, ReplicationConfig, ReplicaState};
-use std::path::{PathBuf, Path};
-use tokio::net::{TcpStream};
-use tokio::time::{sleep, timeout, Duration};
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use parking_lot::RwLock;
 use tokio::signal;
+use tokio::time::Duration;
 
 /// Output format for status command
 #[derive(Debug, Clone)]
