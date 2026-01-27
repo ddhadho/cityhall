@@ -18,3 +18,6 @@ Thumbs.db
 # Test artifacts
 *.wal
 *.sst
+
+# Benchmark results
+benchmark_results.txt
