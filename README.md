@@ -219,17 +219,12 @@ cargo test --test integration_sync -- --nocapture
 
 ## 🧑‍💻 Authorship & AI Collaboration
 
-**Transparency Statement** (per hackathon rules):
+**Transparency Statement** :
 
 - **Human Architect**: System design, architecture decisions, performance benchmarking, debugging, documentation
 - **AI Assistant** (Claude by Anthropic): Line-by-line code generation under direct human guidance
 
-This collaboration enabled rapid implementation of a complex distributed system while maintaining full architectural control.
-
-**All code follows hackathon rules:**
-- ✅ Boilerplate AI code declared in comments
-- ✅ Core logic human-designed, AI-implemented
-- ✅ No plagiarism - original design
+This collaboration enabled rapid implementation of a complex distributed system while I maintained full architectural control.
 
 ---
 
@@ -245,7 +240,7 @@ This collaboration enabled rapid implementation of a complex distributed system 
 
 # 🗄️ The Storage Engine: CityHall Core
 
-> **Note**: The following section describes the underlying storage engine that CityHall Sync is built on top of. This is a portfolio/demonstration project showing mastery of database internals.
+> **Note**: The following section describes the underlying storage engine that CityHall Sync is built on top of. 
 
 ---
 
@@ -358,29 +353,6 @@ CityHall is an active portfolio project. Future areas of focus include:
 -   [ ] **Leveled Compaction**: Migrating from size-tiered to a more optimal leveled compaction strategy for better read performance.
 -   [ ] **Network API**: Expanding the current simple TCP protocol to a more robust API (e.g., gRPC, HTTP) for broader application integration.
 
----
-
-## 🏆 Why CityHall Sync Wins
-
-**Technical Excellence**
-- ✅ Production-grade error handling (exponential backoff, timeouts, connection state tracking)
-- ✅ Comprehensive testing (7 integration tests, 4 benchmarks)
-- ✅ Zero compiler warnings
-- ✅ Rust best practices (no `unsafe`, proper error types, async/await)
-
-**Real-World Impact**
-- ✅ Solves actual African infrastructure problems
-- ✅ Proven performance with measurements
-- ✅ Quantified cost savings ($48,600/year for 50-store deployment)
-- ✅ Works offline when competitors fail
-
-**Innovation**
-- ✅ WAL-based streaming (not snapshot-based)
-- ✅ Persistent state tracking (survives crashes)
-- ✅ Segment discovery protocol
-- ✅ 10x bandwidth efficiency
-
----
 
 ## License
 This project is licensed under the MIT License.
@@ -389,10 +361,7 @@ This project is licensed under the MIT License.
 
 <div align="center">
 
-**Built for Africa. Tested in Kenya. Ready for the world.**
 
-[![Build Status](https://img.shields.io/badge/build-passing-brightgreen)](https://github.com/ddhadho/cityhall)
-[![Tests](https://img.shields.io/badge/tests-passing-brightgreen)](https://github.com/ddhadho/cityhall)
 [![Benchmarks](https://img.shields.io/badge/benchmarks-measured-blue)](BENCHMARKS.md)
 [![Language](https://img.shields.io/badge/language-Rust-orange.svg)](https://www.rust-lang.org/)
 [![License](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
