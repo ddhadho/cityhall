@@ -18,6 +18,11 @@ use tokio::net::TcpStream;
 /// Request from replica to leader
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub enum SyncRequest {
+    /// NEW: Initial handshake with replica identification
+    Handshake {
+        replica_id: String,
+        last_synced_segment: u64,
+    },
     /// Request entries from a specific segment
     GetSegment { segment_number: u64 },
     
@@ -28,6 +33,11 @@ pub enum SyncRequest {
 /// Response from leader to replica
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum SyncResponse {
+    /// NEW: Handshake acknowledgment
+    HandshakeAck {
+        leader_id: String,
+        current_segment: u64,
+    },
     /// Segment data with entries
     SegmentData {
         segment_number: u64,
