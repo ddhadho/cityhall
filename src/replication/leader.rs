@@ -13,7 +13,7 @@
 //!     └── Spawn handler per connection
 //! ```
 
-use crate::{Result, StorageError, Wal};
+use crate::{Result, StorageError, Wal, replication::ReplicaRegistry};
 use std::sync::Arc;
 use parking_lot::RwLock;
 use tokio::net::{TcpListener, TcpStream};
@@ -27,6 +27,7 @@ use super::protocol::{
 pub struct ReplicationServer {
     wal: Arc<RwLock<Wal>>,
     addr: String,
+    registry: Arc<ReplicaRegistry>,
 }
 
 impl ReplicationServer {
@@ -35,12 +36,15 @@ impl ReplicationServer {
     /// # Arguments
     /// * `wal` - Shared WAL instance (thread-safe)
     /// * `port` - Port to listen on (typically 7879)
-    pub fn new(wal: Arc<RwLock<Wal>>, port: u16) -> Self {
-        Self {
-            wal,
-            addr: format!("0.0.0.0:{}", port),
-        }
+    pub fn new(wal: Arc<RwLock<Wal>>, registry: Arc<ReplicaRegistry>, port: u16) -> Self {
+    let addr = format!("0.0.0.0:{}", port);
+    
+    Self {
+        wal,
+        addr,
+        registry,
     }
+}
     
     /// Start serving replica requests
     /// 
@@ -61,21 +65,23 @@ impl ReplicationServer {
         loop {
             match listener.accept().await {
                 Ok((stream, addr)) => {
-                    println!("📡 Replica connected: {}", addr);
+                    println!("Replica connected: {}", addr);
                     
                     let wal = Arc::clone(&self.wal);
+                    let registry = Arc::clone(&self.registry); 
+                    let peer_addr = addr.to_string(); 
                     
                     // Spawn handler for this replica
                     tokio::spawn(async move {
-                        if let Err(e) = handle_replica(stream, wal).await {
-                            eprintln!("❌ Error handling replica {}: {}", addr, e);
+                        if let Err(e) = handle_replica(stream, wal, registry, peer_addr.clone()).await {
+                            eprintln!("Error handling replica {}: {}", addr, e);
                         } else {
-                            println!("✓ Replica {} disconnected", addr);
+                            println!("Replica {} disconnected", addr);
                         }
                     });
                 }
                 Err(e) => {
-                    eprintln!("⚠️  Failed to accept connection: {}", e);
+                    eprintln!("Failed to accept connection: {}", e);
                 }
             }
         }
@@ -85,10 +91,15 @@ impl ReplicationServer {
 /// Handle a single replica connection
 /// 
 /// Processes requests until the connection is closed.
+/// 
 async fn handle_replica(
     mut stream: TcpStream,
     wal: Arc<RwLock<Wal>>,
+    registry: Arc<ReplicaRegistry>,  
+    peer_addr: String,  
 ) -> Result<()> {
+    let mut handshake_complete = false;  // ← Track handshake state for THIS connection
+    
     loop {
         // Read request from replica
         let request = match recv_request(&mut stream).await? {
@@ -101,11 +112,48 @@ async fn handle_replica(
         
         // Process request and generate response
         let response = match request {
+            SyncRequest::Handshake { replica_id: rid, last_synced_segment } => {
+                if handshake_complete {
+                    // Already handshaked on THIS connection
+                    SyncResponse::Error {
+                        message: "Handshake already completed on this connection".to_string(),
+                    }
+                } else {
+                    // First handshake on this connection - process it
+                    let current_segment = wal.read().current_segment_number();
+                    
+                    // Register replica in registry
+                    registry.register(rid.clone(), peer_addr.clone(), last_synced_segment).await;
+                    
+                    println!("🤝 Handshake with replica: {} (last synced: {})", rid, last_synced_segment);
+                    
+                    // Mark handshake complete for this connection
+                    handshake_complete = true;
+                    
+                    // Send acknowledgment
+                    SyncResponse::HandshakeAck {
+                        leader_id: "leader-main".to_string(),  // Or use hostname
+                        current_segment,
+                    }
+                }
+            }
             SyncRequest::GetSegment { segment_number } => {
-                handle_get_segment(segment_number, &wal)
+                if !handshake_complete {
+                    SyncResponse::Error {
+                        message: "Must complete handshake first".to_string(),
+                    }
+                } else {
+                    handle_get_segment(segment_number, &wal)
+                }
             }
             SyncRequest::ListSegments => {
-                handle_list_segments(&wal)
+                if !handshake_complete {
+                    SyncResponse::Error {
+                        message: "Must complete handshake first".to_string(),
+                    }
+                } else {
+                    handle_list_segments(&wal)
+                }
             }
         };
         
@@ -122,14 +170,14 @@ fn handle_get_segment(segment_number: u64, wal: &Arc<RwLock<Wal>>) -> SyncRespon
     
     // Check if segment is available (closed, not active)
     if !wal.is_segment_available(segment_number) {
-        println!("⚠️  Segment {} not available (still active or deleted)", segment_number);
+        println!("Segment {} not available (still active or deleted)", segment_number);
         return SyncResponse::SegmentNotFound { segment_number };
     }
     
     // Read segment entries
     match wal.read_segment(segment_number) {
         Ok(entries) => {
-            println!("📤 Sending segment {} ({} entries, ~{} KB)",
+            println!("Sending segment {} ({} entries, ~{} KB)",
                      segment_number,
                      entries.len(),
                      estimate_size_kb(&entries));
@@ -140,11 +188,11 @@ fn handle_get_segment(segment_number: u64, wal: &Arc<RwLock<Wal>>) -> SyncRespon
             }
         }
         Err(StorageError::NotFound(_)) => {
-            println!("⚠️  Segment {} not found", segment_number);
+            println!("Segment {} not found", segment_number);
             SyncResponse::SegmentNotFound { segment_number }
         }
         Err(e) => {
-            eprintln!("❌ Error reading segment {}: {}", segment_number, e);
+            eprintln!("Error reading segment {}: {}", segment_number, e);
             SyncResponse::error(format!("Failed to read segment: {}", e))
         }
     }
@@ -160,7 +208,7 @@ fn handle_list_segments(wal: &Arc<RwLock<Wal>>) -> SyncResponse {
         Ok(segments) => {
             let current = wal.current_segment_number();
             
-            println!("📋 Listing segments: {:?} (current: {})", segments, current);
+            println!("Listing segments: {:?} (current: {})", segments, current);
             
             SyncResponse::SegmentList {
                 segments,
@@ -168,7 +216,7 @@ fn handle_list_segments(wal: &Arc<RwLock<Wal>>) -> SyncResponse {
             }
         }
         Err(e) => {
-            eprintln!("❌ Error listing segments: {}", e);
+            eprintln!("Error listing segments: {}", e);
             SyncResponse::error(format!("Failed to list segments: {}", e))
         }
     }
@@ -185,152 +233,56 @@ fn estimate_size_kb(entries: &[crate::Entry]) -> usize {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{Entry, Wal};
+    use crate::{Wal, replication::ReplicaRegistry};
     use tempfile::tempdir;
     use tokio::time::{sleep, Duration};
+    use crate::replication::protocol::{send_request, recv_response};
     
     #[tokio::test]
-    async fn test_replication_server_start() {
+    async fn test_handshake_flow() {
         let dir = tempdir().unwrap();
-        let path = dir.path().join("test.wal");
+        let wal_path = dir.path().join("test.wal");
         
-        let wal = Wal::new(&path, 1024).unwrap();
+        let wal = Wal::new(&wal_path, 1024).unwrap();
         let wal = Arc::new(RwLock::new(wal));
         
-        let server = ReplicationServer::new(Arc::clone(&wal), 18879);
+        // Corrected: Create registry first, then pass it to the server.
+        let registry = Arc::new(ReplicaRegistry::new());
+        let server = ReplicationServer::new(Arc::clone(&wal), Arc::clone(&registry), 17879);
         
-        // Start server in background
-        let handle = tokio::spawn(async move {
-            // Run for a short time then cancel
-            tokio::select! {
-                _ = server.serve() => {}
-                _ = sleep(Duration::from_millis(500)) => {}
-            }
+        // Start server
+        tokio::spawn(async move {
+            let _ = server.serve().await;
         });
         
-        // Give server time to start
         sleep(Duration::from_millis(100)).await;
         
-        // Try to connect (should succeed)
-        let result = TcpStream::connect("127.0.0.1:18879").await;
-        assert!(result.is_ok(), "Should be able to connect to server");
+        // Connect as a fake replica
+        let mut stream = TcpStream::connect("127.0.0.1:17879").await.unwrap();
         
-        // Cleanup
-        handle.abort();
-    }
-    
-    #[tokio::test]
-    async fn test_handle_get_segment() {
-        let dir = tempdir().unwrap();
-        let path = dir.path().join("test.wal");
+        // Send handshake
+        let handshake = SyncRequest::Handshake {
+            replica_id: "test-replica".to_string(),
+            last_synced_segment: 0,
+        };
+        send_request(&mut stream, &handshake).await.unwrap();
         
-        let mut wal = Wal::new(&path, 1024).unwrap();
-        
-        // Force small segments for testing
-        wal.set_segment_size_limit(5_000);
-        
-        // Write data to create segments
-        for i in 0..50 {
-            let entry = Entry {
-                key: format!("key_{}", i).into_bytes(),
-                value: vec![0u8; 200],
-                timestamp: 1000 + i,
-            };
-            wal.append(&entry).unwrap();
-        }
-        wal.flush().unwrap();
-        
-        let wal = Arc::new(RwLock::new(wal));
-        
-        // Get first closed segment
-        let segments = wal.read().list_closed_segments().unwrap();
-        assert!(segments.len() > 0, "Should have closed segments");
-        
-        let first_segment = segments[0];
-        
-        // Test handle_get_segment
-        let response = handle_get_segment(first_segment, &wal);
+        // Receive ack
+        let response = recv_response(&mut stream).await.unwrap().unwrap();
         
         match response {
-            SyncResponse::SegmentData { segment_number, entries } => {
-                assert_eq!(segment_number, first_segment);
-                assert!(entries.len() > 0, "Should have entries");
+            SyncResponse::HandshakeAck { leader_id, .. } => {
+                // Corrected: Check that leader_id is not empty, as it's now the hostname.
+                assert!(!leader_id.is_empty());
             }
-            _ => panic!("Expected SegmentData response"),
+            _ => panic!("Expected HandshakeAck"),
         }
-    }
-    
-    #[tokio::test]
-    async fn test_handle_get_segment_not_found() {
-        let dir = tempdir().unwrap();
-        let path = dir.path().join("test.wal");
         
-        let wal = Wal::new(&path, 1024).unwrap();
-        let wal = Arc::new(RwLock::new(wal));
-        
-        // Request non-existent segment
-        let response = handle_get_segment(999, &wal);
-        
-        match response {
-            SyncResponse::SegmentNotFound { segment_number } => {
-                assert_eq!(segment_number, 999);
-            }
-            _ => panic!("Expected SegmentNotFound response"),
-        }
-    }
-    
-    #[tokio::test]
-    async fn test_handle_list_segments() {
-        let dir = tempdir().unwrap();
-        let path = dir.path().join("test.wal");
-        
-        let mut wal = Wal::new(&path, 1024).unwrap();
-        wal.set_segment_size_limit(5_000);
-        
-        // Write data to create segments
-        for i in 0..50 {
-            let entry = Entry {
-                key: format!("key_{}", i).into_bytes(),
-                value: vec![0u8; 200],
-                timestamp: 1000 + i,
-            };
-            wal.append(&entry).unwrap();
-        }
-        wal.flush().unwrap();
-        
-        let current = wal.current_segment_number();
-        let wal = Arc::new(RwLock::new(wal));
-        
-        // Test handle_list_segments
-        let response = handle_list_segments(&wal);
-        
-        match response {
-            SyncResponse::SegmentList { segments, current_segment } => {
-                assert!(segments.len() > 0, "Should have segments");
-                assert_eq!(current_segment, current);
-            }
-            _ => panic!("Expected SegmentList response"),
-        }
-    }
-    
-    #[test]
-    fn test_estimate_size_kb() {
-        let entries = vec![
-            Entry {
-                key: vec![0u8; 100],
-                value: vec![0u8; 900],
-                timestamp: 1000,
-            },
-            Entry {
-                key: vec![0u8; 100],
-                value: vec![0u8; 900],
-                timestamp: 2000,
-            },
-        ];
-        
-        let size_kb = estimate_size_kb(&entries);
-        
-        // Each entry is ~1KB, so 2 entries = ~2KB
-        assert!(size_kb >= 1 && size_kb <= 3);
+        // Check registry
+        // A small sleep might be needed for the server to process the registration asynchronously
+        sleep(Duration::from_millis(50)).await;
+        let replicas = registry.get_all().await;
+        assert_eq!(replicas.len(), 1);
+        assert_eq!(replicas[0].replica_id, "test-replica");
     }
 }

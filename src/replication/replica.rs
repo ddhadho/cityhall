@@ -98,6 +98,12 @@ pub struct ReplicationAgent {
 
     health: ReplicaHealth,
     metrics: ReplicationMetrics,
+
+    /// Persistent TCP connection to leader 
+    stream: Option<TcpStream>, 
+
+    /// Whether handshake was completed on current connection
+    handshake_complete: bool,
 }
 
 impl ReplicationAgent {
@@ -151,6 +157,8 @@ impl ReplicationAgent {
             max_consecutive_failures: 10,
             health: ReplicaHealth::new(),        
             metrics: ReplicationMetrics::new(),
+            stream: None, 
+            handshake_complete: false, 
         })
     }
     
@@ -161,7 +169,8 @@ impl ReplicationAgent {
         println!("   Max consecutive failures: {}", self.max_consecutive_failures);
         
         loop {
-            match self.sync_with_error_handling().await {
+            // Try to sync, handling connection issues
+            match self.sync_with_persistent_connection().await {
                 Ok(true) => {
                     // Successfully synced a segment
                     self.on_sync_success();
@@ -172,7 +181,9 @@ impl ReplicationAgent {
                     println!("⏸️  No new segments to sync");
                 }
                 Err(e) => {
-                    // Error occurred - apply backoff
+                    // Connection error - close stream and retry - apply backoff
+                    self.stream = None;
+                    self.handshake_complete = false;
                     self.on_sync_failure(&e).await;
                 }
             }
@@ -181,62 +192,116 @@ impl ReplicationAgent {
             sleep(self.config.sync_interval).await;
         }
     }
-    
-    /// Sync with comprehensive error handling and retries
-    async fn sync_with_error_handling(&mut self) -> Result<bool> {
-        self.connection_state = ConnectionState::Retrying;
+
+    /// Sync with persistent connection management
+    async fn sync_with_persistent_connection(&mut self) -> Result<bool> {
+        // Establish connection if needed
+        if self.stream.is_none() {
+            println!("🔌 Establishing new connection to leader...");
+            let stream = self.connect_with_timeout().await?;
+            self.stream = Some(stream);
+            self.handshake_complete = true;
+        }
         
-        // Try to sync with timeout on connection
-        match self.connect_with_timeout().await {
-            Ok(mut stream) => {
-                self.connection_state = ConnectionState::Connected;
-                
-                // Perform sync on this connection
-                match self.sync_once_with_stream(&mut stream).await {
-                    Ok(result) => Ok(result),
-                    Err(e) => {
-                        self.connection_state = ConnectionState::Retrying;
-                        Err(e)
-                    }
-                }
+        // Take ownership of the stream temporarily
+        let mut stream = self.stream.take().unwrap();
+        
+        // Try to sync
+        let result = self.sync_once_with_stream(&mut stream).await;
+        
+        // Put the stream back (unless there was an error)
+        match result {
+            Ok(success) => {
+                self.stream = Some(stream);  // Put it back on success
+                Ok(success)
             }
             Err(e) => {
-                self.connection_state = ConnectionState::Retrying;
+                // Don't put it back on error - let it drop (close connection)
                 Err(e)
             }
         }
     }
     
-    async fn connect_with_timeout(&self) -> Result<TcpStream> {
+    /// Establish connection to leader with timeout and handshake
+    async fn connect_with_timeout(&mut self) -> Result<TcpStream> {
         self.metrics.record_connection_attempt();
         
         let connect_future = TcpStream::connect(&self.leader_addr);
         
-        match timeout(self.config.connect_timeout, connect_future).await {
+        let mut stream = match timeout(self.config.connect_timeout, connect_future).await {
             Ok(Ok(stream)) => {
-                self.metrics.record_connection_success();  
-                Ok(stream)
+                self.metrics.record_connection_success();
+                stream
             }
             Ok(Err(e)) => {
-                self.metrics.record_connection_failure(); 
-                Err(StorageError::ConnectionFailed(format!(
+                self.metrics.record_connection_failure();
+                return Err(StorageError::ConnectionFailed(format!(
                     "Failed to connect to {}: {}",
                     self.leader_addr, e
-                )))
+                )));
             }
             Err(_) => {
-                self.metrics.record_connection_failure();  
-                Err(StorageError::Timeout(format!(
+                self.metrics.record_connection_failure();
+                return Err(StorageError::Timeout(format!(
                     "Connection timeout after {:?}",
                     self.config.connect_timeout
-                )))
+                )));
+            }
+        };
+        
+        println!("🔌 Connected to leader at {}", self.leader_addr);
+        
+        // NEW: Perform handshake immediately after connecting
+        let handshake = SyncRequest::Handshake {
+            replica_id: self.state.replica_id.clone(),
+            last_synced_segment: self.state.last_synced_segment,
+        };
+
+        timeout(
+            self.config.write_timeout,
+            send_request(&mut stream, &handshake),
+        )
+        .await
+        .map_err(|_| StorageError::Timeout("Write timeout during handshake".to_string()))??;
+
+        // Wait for acknowledgment
+        let response = timeout(
+            self.config.read_timeout,
+            recv_response(&mut stream),
+        )
+        .await
+        .map_err(|_| StorageError::Timeout("Read timeout during handshake".to_string()))??
+        .ok_or_else(|| StorageError::Corruption("No handshake response".to_string()))?;
+
+        match response {
+            SyncResponse::HandshakeAck { leader_id, current_segment } => {
+                println!(
+                    "🤝 Handshake successful with leader {} (current segment: {})",
+                    leader_id, current_segment
+                );
+                // This is why we need &mut self - we're updating state
+                self.state.leader_current_segment = current_segment;
+            }
+            SyncResponse::Error { message } => {
+                return Err(StorageError::Corruption(format!(
+                    "Handshake failed: {}",
+                    message
+                )));
+            }
+            _ => {
+                return Err(StorageError::Corruption(
+                    "Unexpected handshake response".to_string()
+                ));
             }
         }
+
+        Ok(stream)
     }
     
     /// Perform single sync operation with an established connection
     /// NOW WITH SMART SEGMENT DISCOVERY!
     async fn sync_once_with_stream(&mut self, stream: &mut TcpStream) -> Result<bool> {
+
         // STEP 1: Ask leader what segments are available
         let (available_segments, current_segment) = match self.fetch_segment_list(stream).await {
             Ok(list) => list,
@@ -399,6 +464,13 @@ impl ReplicationAgent {
     async fn on_sync_failure(&mut self, error: &StorageError) {
         self.consecutive_failures += 1;
 
+        // Close the connection on failure
+        self.stream = None;
+        self.handshake_complete = false;
+
+        self.health.record_failure(error);
+        self.metrics.record_sync_failure();
+
         self.health.record_failure(error);
         self.metrics.record_sync_failure();
         
@@ -514,7 +586,7 @@ impl ReplicationAgent {
     }
     
     /// Request list of available segments from leader
-    pub async fn list_segments(&self) -> Result<(Vec<u64>, u64)> {
+    pub async fn list_segments(&mut self) -> Result<(Vec<u64>, u64)> {
         let mut stream = self.connect_with_timeout().await?;
         self.fetch_segment_list(&mut stream).await
     }
@@ -674,5 +746,53 @@ mod tests {
         assert_eq!(config.read_timeout, Duration::from_secs(30));
         assert_eq!(config.write_timeout, Duration::from_secs(10));
         assert_eq!(config.sync_interval, Duration::from_secs(5));
+    }
+    
+    #[tokio::test]
+    async fn test_handshake_flow() {
+        use tempfile::tempdir;
+        use tokio::time::{sleep, Duration};
+        
+        let dir = tempdir().unwrap();
+        let wal_path = dir.path().join("test.wal");
+        
+        let wal = Wal::new(&wal_path, 1024).unwrap();
+        let wal = Arc::new(RwLock::new(wal));
+        
+        let server = ReplicationServer::new(Arc::clone(&wal), 17879);
+        let registry = server.registry();
+        
+        // Start server
+        tokio::spawn(async move {
+            let _ = server.serve().await;
+        });
+        
+        sleep(Duration::from_millis(100)).await;
+        
+        // Connect as a fake replica
+        let mut stream = TcpStream::connect("127.0.0.1:17879").await.unwrap();
+        
+        // Send handshake
+        let handshake = SyncRequest::Handshake {
+            replica_id: "test-replica".to_string(),
+            last_synced_segment: 0,
+        };
+        send_request(&mut stream, &handshake).await.unwrap();
+        
+        // Receive ack
+        let response = recv_response(&mut stream).await.unwrap().unwrap();
+        
+        match response {
+            SyncResponse::HandshakeAck { leader_id, .. } => {
+                assert_eq!(leader_id, "leader-main");
+            }
+            _ => panic!("Expected HandshakeAck"),
+        }
+        
+        // Check registry
+        sleep(Duration::from_millis(50)).await;
+        let replicas = registry.get_all().await;
+        assert_eq!(replicas.len(), 1);
+        assert_eq!(replicas[0].replica_id, "test-replica");
     }
 }
