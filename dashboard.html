@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>CityHall Replication Dashboard</title>
+    <title>CityHall Dashboard</title>
     <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
     <script src="https://cdn.tailwindcss.com"></script>
 </head>
@@ -11,23 +11,27 @@
     <div class="max-w-7xl mx-auto">
         <!-- Header -->
         <div class="mb-8">
-            <h1 class="text-4xl font-bold mb-2">🏙️ CityHall Sync Dashboard</h1>
-            <p class="text-gray-600">Real-time WAL Replication Monitoring</p>
+            <h1 class="text-4xl font-bold mb-2">🏙️ CityHall Dashboard</h1>
+            <p class="text-gray-600">Real-time Storage Engine & Replication Monitoring</p>
         </div>
 
-        <!-- Stats Cards -->
-        <div class="grid grid-cols-4 gap-4 mb-8">
+        <!-- Top Stats Cards -->
+        <div class="grid grid-cols-5 gap-4 mb-8">
+            <div class="bg-white p-6 rounded-lg shadow">
+                <div class="text-sm text-gray-500">Total Writes</div>
+                <div id="totalWrites" class="text-3xl font-bold text-blue-600">-</div>
+            </div>
+            <div class="bg-white p-6 rounded-lg shadow">
+                <div class="text-sm text-gray-500">Total Reads</div>
+                <div id="totalReads" class="text-3xl font-bold text-green-600">-</div>
+            </div>
+            <div class="bg-white p-6 rounded-lg shadow">
+                <div class="text-sm text-gray-500">Read Hit Rate</div>
+                <div id="readHitRate" class="text-3xl font-bold text-purple-600">-</div>
+            </div>
             <div class="bg-white p-6 rounded-lg shadow">
                 <div class="text-sm text-gray-500">Connected Replicas</div>
                 <div id="connectedCount" class="text-3xl font-bold text-green-600">-</div>
-            </div>
-            <div class="bg-white p-6 rounded-lg shadow">
-                <div class="text-sm text-gray-500">Total Entries</div>
-                <div id="totalEntries" class="text-3xl font-bold">-</div>
-            </div>
-            <div class="bg-white p-6 rounded-lg shadow">
-                <div class="text-sm text-gray-500">Current WAL Segment</div>
-                <div id="walSegments" class="text-3xl font-bold">-</div>
             </div>
             <div class="bg-white p-6 rounded-lg shadow">
                 <div class="text-sm text-gray-500">Uptime</div>
@@ -35,21 +39,72 @@
             </div>
         </div>
 
-        <!-- Charts -->
+        <!-- Storage Engine Stats -->
+        <div class="bg-white p-6 rounded-lg shadow mb-8">
+            <h3 class="text-lg font-semibold mb-4">📊 Storage Engine Metrics</h3>
+            <div class="grid grid-cols-4 gap-4">
+                <div>
+                    <div class="text-sm text-gray-500">MemTable Size</div>
+                    <div id="memtableSize" class="text-2xl font-bold">-</div>
+                </div>
+                <div>
+                    <div class="text-sm text-gray-500">MemTable Entries</div>
+                    <div id="memtableEntries" class="text-2xl font-bold">-</div>
+                </div>
+                <div>
+                    <div class="text-sm text-gray-500">SSTable Count</div>
+                    <div id="sstableCount" class="text-2xl font-bold">-</div>
+                </div>
+                <div>
+                    <div class="text-sm text-gray-500">Disk Usage</div>
+                    <div id="diskUsage" class="text-2xl font-bold">-</div>
+                </div>
+                <div>
+                    <div class="text-sm text-gray-500">Flushes</div>
+                    <div id="flushesTotal" class="text-2xl font-bold">-</div>
+                </div>
+                <div>
+                    <div class="text-sm text-gray-500">Compactions</div>
+                    <div id="compactionsTotal" class="text-2xl font-bold">-</div>
+                </div>
+                <div>
+                    <div class="text-sm text-gray-500">Write Amplification</div>
+                    <div id="writeAmplification" class="text-2xl font-bold">-</div>
+                </div>
+                <div>
+                    <div class="text-sm text-gray-500">Bloom FP Rate</div>
+                    <div id="bloomFpRate" class="text-2xl font-bold">-</div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Charts Row 1: Latency -->
+        <div class="grid grid-cols-2 gap-6 mb-8">
+            <div class="bg-white p-6 rounded-lg shadow">
+                <h3 class="text-lg font-semibold mb-4">Write Latency (μs)</h3>
+                <canvas id="writeLatencyChart"></canvas>
+            </div>
+            <div class="bg-white p-6 rounded-lg shadow">
+                <h3 class="text-lg font-semibold mb-4">Read Latency (μs)</h3>
+                <canvas id="readLatencyChart"></canvas>
+            </div>
+        </div>
+
+        <!-- Charts Row 2: Replication -->
         <div class="grid grid-cols-2 gap-6 mb-8">
             <div class="bg-white p-6 rounded-lg shadow">
                 <h3 class="text-lg font-semibold mb-4">Replication Lag (Segments)</h3>
                 <canvas id="lagChart"></canvas>
             </div>
             <div class="bg-white p-6 rounded-lg shadow">
-                <h3 class="text-lg font-semibold mb-4">Throughput</h3>
+                <h3 class="text-lg font-semibold mb-4">Throughput (entries/sec)</h3>
                 <canvas id="throughputChart"></canvas>
             </div>
         </div>
 
         <!-- Replica Table -->
         <div class="bg-white p-6 rounded-lg shadow">
-            <h3 class="text-lg font-semibold mb-4">Replica Status</h3>
+            <h3 class="text-lg font-semibold mb-4">🔄 Replica Status</h3>
             <table class="w-full">
                 <thead class="border-b">
                     <tr>
@@ -58,10 +113,11 @@
                         <th class="text-left p-2">Last Segment</th>
                         <th class="text-left p-2">Lag (Segments)</th>
                         <th class="text-left p-2">Last Seen</th>
+                        <th class="text-left p-2">Bytes Sent</th>
                     </tr>
                 </thead>
                 <tbody id="replicaTable">
-                    <tr><td colspan="5" class="text-center p-8 text-gray-400">No replicas connected</td></tr>
+                    <tr><td colspan="6" class="text-center p-8 text-gray-400">No replicas connected</td></tr>
                 </tbody>
             </table>
         </div>
@@ -69,6 +125,38 @@
 
     <script>
         // Chart setup
+        const writeLatencyChart = new Chart(document.getElementById('writeLatencyChart'), {
+            type: 'bar',
+            data: {
+                labels: ['p50', 'p99'],
+                datasets: [{
+                    label: 'Latency (μs)',
+                    data: [0, 0],
+                    backgroundColor: ['rgba(59, 130, 246, 0.5)', 'rgba(239, 68, 68, 0.5)'],
+                }]
+            },
+            options: {
+                responsive: true,
+                scales: { y: { beginAtZero: true } }
+            }
+        });
+
+        const readLatencyChart = new Chart(document.getElementById('readLatencyChart'), {
+            type: 'bar',
+            data: {
+                labels: ['p50', 'p99'],
+                datasets: [{
+                    label: 'Latency (μs)',
+                    data: [0, 0],
+                    backgroundColor: ['rgba(16, 185, 129, 0.5)', 'rgba(245, 158, 11, 0.5)'],
+                }]
+            },
+            options: {
+                responsive: true,
+                scales: { y: { beginAtZero: true } }
+            }
+        });
+
         const lagChart = new Chart(document.getElementById('lagChart'), {
             type: 'bar',
             data: {
@@ -109,18 +197,41 @@
                 const res = await fetch('/api/metrics');
                 const data = await res.json();
 
-                // Update cards
+                // Update top cards
+                document.getElementById('totalWrites').textContent = data.storage_metrics.writes_total.toLocaleString();
+                document.getElementById('totalReads').textContent = data.storage_metrics.reads_total.toLocaleString();
+                document.getElementById('readHitRate').textContent = (data.storage_metrics.read_hit_rate * 100).toFixed(1) + '%';
                 document.getElementById('connectedCount').textContent = data.connected_count;
-                document.getElementById('totalEntries').textContent = data.total_entries.toLocaleString();
-                document.getElementById('walSegments').textContent = data.wal_segments;
                 document.getElementById('uptime').textContent = formatUptime(data.uptime_seconds);
 
-                // Update lag chart
+                // Update storage metrics
+                document.getElementById('memtableSize').textContent = data.storage_metrics.memtable_size_mb.toFixed(2) + ' MB';
+                document.getElementById('memtableEntries').textContent = data.storage_metrics.memtable_entries.toLocaleString();
+                document.getElementById('sstableCount').textContent = data.storage_metrics.sstable_count;
+                document.getElementById('diskUsage').textContent = data.storage_metrics.disk_usage_mb.toFixed(2) + ' MB';
+                document.getElementById('flushesTotal').textContent = data.storage_metrics.flushes_total;
+                document.getElementById('compactionsTotal').textContent = data.storage_metrics.compactions_total;
+                document.getElementById('writeAmplification').textContent = data.storage_metrics.write_amplification.toFixed(2) + 'x';
+                document.getElementById('bloomFpRate').textContent = (data.storage_metrics.bloom_filter_fp_rate * 100).toFixed(2) + '%';
+
+                // Update latency charts
+                writeLatencyChart.data.datasets[0].data = [
+                    data.storage_metrics.write_latency_p50_us,
+                    data.storage_metrics.write_latency_p99_us
+                ];
+                writeLatencyChart.update();
+
+                readLatencyChart.data.datasets[0].data = [
+                    data.storage_metrics.read_latency_p50_us,
+                    data.storage_metrics.read_latency_p99_us
+                ];
+                readLatencyChart.update();
+
+                // Update replication charts
                 lagChart.data.labels = data.replicas.map(r => r.replica_id.substring(0, 8));
                 lagChart.data.datasets[0].data = data.replicas.map(r => r.lag_segments);
                 lagChart.update();
 
-                // Update throughput chart
                 throughputHistory.push(data.throughput_entries_per_sec);
                 if (throughputHistory.length > 20) throughputHistory.shift();
                 
@@ -128,7 +239,7 @@
                 throughputChart.data.datasets[0].data = throughputHistory;
                 throughputChart.update();
 
-                // Update table
+                // Update replica table
                 updateReplicaTable(data.replicas);
             } catch (e) {
                 console.error('Failed to fetch metrics:', e);
@@ -138,7 +249,7 @@
         function updateReplicaTable(replicas) {
             const tbody = document.getElementById('replicaTable');
             if (replicas.length === 0) {
-                tbody.innerHTML = '<tr><td colspan="5" class="text-center p-8 text-gray-400">No replicas connected</td></tr>';
+                tbody.innerHTML = '<tr><td colspan="6" class="text-center p-8 text-gray-400">No replicas connected</td></tr>';
                 return;
             }
 
@@ -149,6 +260,7 @@
                     <td class="p-2">${r.last_segment}</td>
                     <td class="p-2 ${r.lag_segments > 2 ? 'text-red-600 font-bold' : 'text-green-600'}">${r.lag_segments}</td>
                     <td class="p-2 text-sm text-gray-600">${r.last_seen_ago_secs}s ago</td>
+                    <td class="p-2 text-sm text-gray-600">${formatBytes(r.bytes_sent)}</td>
                 </tr>
             `).join('');
         }
@@ -166,6 +278,12 @@
             const h = Math.floor(seconds / 3600);
             const m = Math.floor((seconds % 3600) / 60);
             return `${h}h ${m}m`;
+        }
+
+        function formatBytes(bytes) {
+            if (bytes < 1024) return bytes + ' B';
+            if (bytes < 1048576) return (bytes / 1024).toFixed(1) + ' KB';
+            return (bytes / 1048576).toFixed(1) + ' MB';
         }
 
         // Auto-refresh every second
