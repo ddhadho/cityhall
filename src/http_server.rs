@@ -15,20 +15,20 @@ use crate::replication::metrics::ReplicationMetrics;
 
 #[derive(Clone)]
 pub struct AppState {
-    pub storage: Arc<Mutex<StorageEngine>>,
+    pub metrics: Arc<ReplicationMetrics>,
     pub replica_registry: Arc<ReplicaRegistry>,
     pub current_wal_segment: Arc<tokio::sync::RwLock<u64>>,
     pub start_time: Instant,
 }
 
 pub async fn start_dashboard_server(
-    storage: Arc<Mutex<StorageEngine>>,
+    metrics: Arc<ReplicationMetrics>,
     replica_registry: Arc<ReplicaRegistry>,
     current_wal_segment: Arc<tokio::sync::RwLock<u64>>,
     start_time: Instant,
 ) {
     let state = AppState {
-        storage,
+        metrics,
         replica_registry,
         current_wal_segment,
         start_time,
