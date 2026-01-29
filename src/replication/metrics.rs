@@ -5,6 +5,10 @@
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::{SystemTime, UNIX_EPOCH};
 
+use serde::{Serialize, Deserialize};
+use crate::replication::registry::{ReplicaRegistry, ConnectionState};
+use std::time::Instant;
+
 /// Replication metrics for observability
 #[derive(Debug)]
 pub struct ReplicationMetrics {
@@ -201,6 +205,88 @@ Data:
             last_sync
         )
     }
+
+    /// Convert to dashboard-friendly format
+    /// 
+    /// This is called by the HTTP server to expose metrics to the web dashboard
+    pub async fn to_dashboard_metrics(
+        &self,
+        replica_registry: &ReplicaRegistry,
+        current_wal_segment: u64,
+        start_time: Instant,  // Pass this in since we don't track it
+    ) -> DashboardMetrics {
+        // Get all replicas from registry
+        let replicas_info = replica_registry.get_all().await;
+        
+        // Transform each replica into dashboard format
+        let replicas = replicas_info.iter().map(|info| {
+            let lag = current_wal_segment as i64 - info.last_segment_requested as i64;
+            let last_seen = info.last_heartbeat.elapsed().as_secs();
+            
+            ReplicaDashboardInfo {
+                replica_id: info.replica_id.clone(),
+                status: format!("{:?}", info.connection_state),
+                last_segment: info.last_segment_requested,
+                lag_segments: lag,
+                last_seen_ago_secs: last_seen,
+                bytes_sent: info.bytes_sent,
+            }
+        }).collect();
+        
+        // Count connected replicas
+        let connected_count = replicas_info.iter()
+            .filter(|r| r.connection_state != ConnectionState::Offline)
+            .count();
+        
+        // Calculate throughput
+        let uptime_secs = start_time.elapsed().as_secs();
+        let throughput = if uptime_secs > 0 {
+            self.total_entries_synced() as f64 / uptime_secs as f64
+        } else {
+            0.0
+        };
+        
+        DashboardMetrics {
+            node_type: "Leader".to_string(),
+            node_id: "leader-1".to_string(),
+            uptime_seconds: uptime_secs,
+            total_entries: self.total_entries_synced(),
+            wal_segments: current_wal_segment,
+            replicas,
+            connected_count,
+            throughput_entries_per_sec: throughput,
+            bytes_synced_last_minute: self.total_bytes_synced(),
+            last_updated: SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .unwrap()
+                .as_secs(),
+        }
+    }
+}
+
+/// Dashboard-friendly metrics format
+#[derive(Serialize, Deserialize, Clone, Debug)]
+pub struct DashboardMetrics {
+    pub node_type: String,
+    pub node_id: String,
+    pub uptime_seconds: u64,
+    pub total_entries: u64,
+    pub wal_segments: u64,
+    pub replicas: Vec<ReplicaDashboardInfo>,
+    pub connected_count: usize,
+    pub throughput_entries_per_sec: f64,
+    pub bytes_synced_last_minute: u64,
+    pub last_updated: u64,
+}
+
+#[derive(Serialize, Deserialize, Clone, Debug)]
+pub struct ReplicaDashboardInfo {
+    pub replica_id: String,
+    pub status: String,
+    pub last_segment: u64,
+    pub lag_segments: i64,
+    pub last_seen_ago_secs: u64,
+    pub bytes_sent: u64,
 }
 
 impl Default for ReplicationMetrics {

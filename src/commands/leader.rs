@@ -5,17 +5,18 @@
 //! - Replication server for serving replicas
 //! - Shared WAL between StorageEngine and replication
 
-use cityhall::{Result, StorageEngine};
+use cityhall::replication::metrics::ReplicationMetrics;
 use cityhall::replication::ReplicationServer;
-use cityhall::replication::registry::ReplicaRegistry; // NEW
-use cityhall::http_server; // NEW
+use cityhall::replication::registry::ReplicaRegistry; 
+use cityhall::{StorageEngine, http_server}; 
+use cityhall::Result;
 use std::path::PathBuf;
 use std::sync::Arc;
 use parking_lot::Mutex;
 use tokio::signal;
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 use tokio::net::{TcpListener, TcpStream};
-use tokio::sync::RwLock; // NEW for current_wal_segment
+use tokio::sync::RwLock; 
 
 /// Default MemTable size: 4MB
 const DEFAULT_MEMTABLE_SIZE: usize = 4 * 1024 * 1024;
@@ -36,6 +37,8 @@ pub async fn run_leader(
     println!("📊 MemTable size: {} MB", DEFAULT_MEMTABLE_SIZE / 1_048_576);
     println!();
     
+    let start_time = std::time::Instant::now();
+
     // Create data directory
     std::fs::create_dir_all(&data_dir)?;
     
@@ -55,8 +58,12 @@ pub async fn run_leader(
     println!("✓ StorageEngine initialized");
 
     // Initialize Replica Registry
-    let replica_registry = Arc::new(ReplicaRegistry::new()); // NEW
+    let replica_registry = Arc::new(ReplicaRegistry::new()); 
     println!("✓ Replica Registry initialized");
+
+    // NEW: Create replication metrics
+    let replication_metrics = Arc::new(ReplicationMetrics::new());
+    println!("✓ Replication Metrics initialized");
 
     // Initialize shared current WAL segment (for dashboard)
     let current_wal_segment = Arc::new(RwLock::new(wal.read().current_segment_number())); // NEW
@@ -79,10 +86,11 @@ pub async fn run_leader(
     println!("✓ Replication server started on port {}", replication_port);
 
     // Start Dashboard HTTP server
-    let dashboard_handle = tokio::spawn(http_server::start_dashboard_server( // NEW
-        Arc::clone(&storage),
+    let dashboard_handle = tokio::spawn(http_server::start_dashboard_server( 
+        Arc::clone(&replication_metrics), 
         Arc::clone(&replica_registry),
         Arc::clone(&current_wal_segment),
+        start_time, 
     ));
     println!("✓ Dashboard HTTP server started");
 
@@ -132,6 +140,15 @@ pub async fn run_leader(
             }
         }
     });
+
+
+    // Start dashboard with all parameters
+    tokio::spawn(http_server::start_dashboard_server(
+        Arc::clone(&replication_metrics),
+        Arc::clone(&replica_registry),
+        Arc::clone(&current_wal_segment),
+        start_time,  // NEW: Pass start time
+    ));
     
     // Wait for shutdown signal
     tokio::select! {
