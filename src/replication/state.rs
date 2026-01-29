@@ -23,6 +23,10 @@ pub struct ReplicaState {
     /// Replica has all entries from segments <= this number
     pub last_synced_segment: u64,
 
+    /// The leader's current (active) WAL segment number, as reported in handshake.
+    /// This helps the replica understand the leader's progress.
+    pub leader_current_segment: u64,
+
     /// Timestamp of last successful sync
     pub last_sync_time: u64, // Unix timestamp in seconds
 
@@ -40,6 +44,7 @@ impl ReplicaState {
             replica_id,
             leader_addr,
             last_synced_segment: 0, // Start from segment 1
+            leader_current_segment: 0, // Initialized to 0, updated by handshake
             last_sync_time: SystemTime::now()
                 .duration_since(SystemTime::UNIX_EPOCH)
                 .unwrap()

@@ -15,7 +15,7 @@ pub struct ReplicaRegistry {
 }
 
 /// Information about a connected replica
-#[derive(Clone, Debug, Serialize, Deserialize)]
+#[derive(Clone, Debug)]
 pub struct ReplicaInfo {
     /// Unique replica identifier
     pub replica_id: String,
@@ -83,7 +83,7 @@ impl ReplicaRegistry {
         
         replicas.insert(replica_id.clone(), info);
         
-        println!("📝 Registered replica: {} (at segment {})", replica_id, last_synced_segment);
+        println!("Registered replica: {} (at segment {})", replica_id, last_synced_segment);
     }
     
     /// Update replica's last requested segment
@@ -115,7 +115,7 @@ impl ReplicaRegistry {
         
         if let Some(info) = replicas.get_mut(replica_id) {
             info.connection_state = ConnectionState::Offline;
-            println!("📴 Replica offline: {}", replica_id);
+            println!("Replica offline: {}", replica_id);
         }
     }
     
@@ -164,7 +164,6 @@ impl Default for ReplicaRegistry {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use tokio::time::{sleep, Duration};
     
     #[tokio::test]
     async fn test_register_replica() {
