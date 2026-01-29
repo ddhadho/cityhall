@@ -49,7 +49,7 @@ pub struct StorageEngine {
     last_compaction_check: Instant,
 }
 
-#[derive(Debug)]
+#[derive(Debug, serde::Serialize)] // Added serde::Serialize
 pub struct EngineStats {
     pub memtable_entries: usize,
     pub memtable_bytes: usize,

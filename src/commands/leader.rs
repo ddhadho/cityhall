@@ -7,12 +7,15 @@
 
 use cityhall::{Result, StorageEngine};
 use cityhall::replication::ReplicationServer;
+use cityhall::replication::registry::ReplicaRegistry; // NEW
+use cityhall::http_server; // NEW
 use std::path::PathBuf;
 use std::sync::Arc;
 use parking_lot::Mutex;
 use tokio::signal;
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 use tokio::net::{TcpListener, TcpStream};
+use tokio::sync::RwLock; // NEW for current_wal_segment
 
 /// Default MemTable size: 4MB
 const DEFAULT_MEMTABLE_SIZE: usize = 4 * 1024 * 1024;
@@ -50,7 +53,15 @@ pub async fn run_leader(
     )?;
     let storage = Arc::new(Mutex::new(storage_engine));
     println!("✓ StorageEngine initialized");
-    
+
+    // Initialize Replica Registry
+    let replica_registry = Arc::new(ReplicaRegistry::new()); // NEW
+    println!("✓ Replica Registry initialized");
+
+    // Initialize shared current WAL segment (for dashboard)
+    let current_wal_segment = Arc::new(RwLock::new(wal.read().current_segment_number())); // NEW
+    println!("✓ Current WAL segment tracker initialized (current: {})", *current_wal_segment.read().await);
+
     // Get WAL for replication (same instance used by StorageEngine)
     let replication_wal = {
         let engine = storage.lock();
@@ -58,13 +69,34 @@ pub async fn run_leader(
     };
     
     // Start replication server
-    let replication_server = ReplicationServer::new(replication_wal, replication_port);
+    // MODIFIED: Pass replica_registry to ReplicationServer::new
+    let replication_server = ReplicationServer::new(replication_wal, Arc::clone(&replica_registry), replication_port);
     let replication_handle = tokio::spawn(async move {
         if let Err(e) = replication_server.serve().await {
             eprintln!("❌ Replication server error: {}", e);
         }
     });
     println!("✓ Replication server started on port {}", replication_port);
+
+    // Start Dashboard HTTP server
+    let dashboard_handle = tokio::spawn(http_server::start_dashboard_server( // NEW
+        Arc::clone(&storage),
+        Arc::clone(&replica_registry),
+        Arc::clone(&current_wal_segment),
+    ));
+    println!("✓ Dashboard HTTP server started");
+
+    // Update current WAL segment periodically (for dashboard)
+    let wal_clone = Arc::clone(&wal);
+    let segment_tracker = Arc::clone(&current_wal_segment);
+    tokio::spawn(async move {
+        loop {
+            tokio::time::sleep(tokio::time::Duration::from_secs(1)).await;
+            let current = wal_clone.read().current_segment_number();
+            *segment_tracker.write().await = current;
+        }
+    });
+    println!("✓ WAL segment tracker background task started");
     
     // Start client server
     let client_addr = format!("0.0.0.0:{}", port);
@@ -113,6 +145,9 @@ pub async fn run_leader(
         }
         _ = client_handle => {
             println!("⚠️  Client server stopped unexpectedly");
+        }
+        _ = dashboard_handle => { // NEW
+            println!("⚠️  Dashboard HTTP server stopped unexpectedly");
         }
     }
     
@@ -268,7 +303,7 @@ mod tests {
         let storage = Arc::new(Mutex::new(storage_engine));
         
         // Get WAL from storage engine
-        let wal_from_engine = {
+        let _wal_from_engine = {
             let engine = storage.lock();
             engine.get_wal()
         };
