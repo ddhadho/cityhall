@@ -21,29 +21,6 @@ pub struct AppState {
     pub start_time: Instant,
 }
 
-#[derive(Serialize)]
-pub struct DashboardMetrics {
-    pub node_type: String,
-    pub node_id: String,
-    pub uptime_seconds: u64,
-    pub total_entries: u64,
-    pub wal_segments: u64,
-    pub replicas: Vec<ReplicaDashboardInfo>,
-    pub connected_count: usize,
-    pub throughput_entries_per_sec: f64,
-    pub last_updated: u64,
-}
-
-#[derive(Serialize)]
-pub struct ReplicaDashboardInfo {
-    pub replica_id: String,
-    pub status: String,
-    pub last_segment: u64,
-    pub lag_segments: i64,
-    pub last_seen_ago_secs: u64,
-    pub bytes_sent: u64,
-}
-
 pub async fn start_dashboard_server(
     storage: Arc<Mutex<StorageEngine>>,
     replica_registry: Arc<ReplicaRegistry>,
