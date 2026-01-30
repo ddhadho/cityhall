@@ -2,10 +2,10 @@
 // Run this to diagnose the WAL issue
 
 use cityhall::{StorageEngine, Wal};
-use std::fs;
-use tempfile::tempdir;
-use std::sync::Arc;
 use parking_lot::RwLock;
+use std::fs;
+use std::sync::Arc;
+use tempfile::tempdir;
 
 #[test]
 fn test_wal_diagnostic() {
@@ -16,7 +16,7 @@ fn test_wal_diagnostic() {
     let wal = Wal::new(&wal_path, 1024).unwrap();
     let wal = Arc::new(RwLock::new(wal));
     let mut engine = StorageEngine::new(path, memtable_size, wal).unwrap();
-        
+
     println!("\n=== WAL Diagnostic Test ===\n");
 
     println!("Test directory: {:?}", dir.path());

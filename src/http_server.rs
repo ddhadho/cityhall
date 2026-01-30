@@ -1,17 +1,13 @@
-use axum::{
-    extract::State,
-    routing::get,
-    Json, Router,
-};
+use axum::{extract::State, routing::get, Json, Router};
 use serde::Serialize;
 use std::sync::Arc;
 use std::time::{Instant, SystemTime, UNIX_EPOCH};
 use tokio::net::TcpListener;
 use tower_http::cors::CorsLayer;
 
+use crate::replication::metrics::ReplicationMetrics;
 use crate::replication::registry::ReplicaRegistry;
 use crate::replication::ConnectionState;
-use crate::replication::metrics::ReplicationMetrics;
 
 #[derive(Clone)]
 pub struct AppState {
@@ -58,8 +54,8 @@ pub async fn start_dashboard_server(
 }
 
 /* =========================
-   API TYPES
-   ========================= */
+API TYPES
+========================= */
 
 #[derive(Serialize)]
 pub struct DashboardMetrics {
@@ -124,30 +120,32 @@ pub struct StorageMetrics {
 }
 
 /* =========================
-   HANDLERS
-   ========================= */
+HANDLERS
+========================= */
 
-async fn get_metrics(
-    State(state): State<AppState>,
-) -> Json<DashboardMetrics> {
+async fn get_metrics(State(state): State<AppState>) -> Json<DashboardMetrics> {
     let current_segment = *state.current_wal_segment.read().await;
     let replicas_info = state.replica_registry.get_all().await;
 
-    let replicas: Vec<ReplicaDashboardInfo> = replicas_info.iter().map(|info| {
-        let lag = current_segment as i64 - info.last_segment_requested as i64;
-        let last_seen = info.last_heartbeat.elapsed().as_secs();
+    let replicas: Vec<ReplicaDashboardInfo> = replicas_info
+        .iter()
+        .map(|info| {
+            let lag = current_segment as i64 - info.last_segment_requested as i64;
+            let last_seen = info.last_heartbeat.elapsed().as_secs();
 
-        ReplicaDashboardInfo {
-            replica_id: info.replica_id.clone(),
-            status: format!("{:?}", info.connection_state),
-            last_segment: info.last_segment_requested,
-            lag_segments: lag.max(0),
-            last_seen_ago_secs: last_seen,
-            bytes_sent: info.bytes_sent,
-        }
-    }).collect();
+            ReplicaDashboardInfo {
+                replica_id: info.replica_id.clone(),
+                status: format!("{:?}", info.connection_state),
+                last_segment: info.last_segment_requested,
+                lag_segments: lag.max(0),
+                last_seen_ago_secs: last_seen,
+                bytes_sent: info.bytes_sent,
+            }
+        })
+        .collect();
 
-    let connected_count = replicas_info.iter()
+    let connected_count = replicas_info
+        .iter()
         .filter(|r| r.connection_state != ConnectionState::Offline)
         .count();
 

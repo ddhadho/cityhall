@@ -43,7 +43,7 @@ impl ReplicaState {
         Self {
             replica_id,
             leader_addr,
-            last_synced_segment: 0, // Start from segment 1
+            last_synced_segment: 0,    // Start from segment 1
             leader_current_segment: 0, // Initialized to 0, updated by handshake
             last_sync_time: SystemTime::now()
                 .duration_since(SystemTime::UNIX_EPOCH)

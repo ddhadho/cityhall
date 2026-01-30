@@ -5,9 +5,9 @@
 
 use cityhall::metrics::metrics;
 use cityhall::{StorageEngine, Wal};
-use tempfile::tempdir;
-use std::sync::Arc;
 use parking_lot::RwLock;
+use std::sync::Arc;
+use tempfile::tempdir;
 
 #[test]
 fn test_metrics_validation() {

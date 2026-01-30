@@ -3,7 +3,7 @@
 //! Wire protocol for leader-replica communication
 //!
 //! ## Message Format
-//! 
+//!
 //! All messages are length-prefixed:
 //! ```
 //! [4 bytes: length (u32, little-endian)]
@@ -25,7 +25,7 @@ pub enum SyncRequest {
     },
     /// Request entries from a specific segment
     GetSegment { segment_number: u64 },
-    
+
     /// Get list of available segments
     ListSegments,
 }
@@ -43,22 +43,18 @@ pub enum SyncResponse {
         segment_number: u64,
         entries: Vec<Entry>,
     },
-    
+
     /// List of available segment numbers
     SegmentList {
         segments: Vec<u64>,
         current_segment: u64,
     },
-    
+
     /// Segment not found (deleted or doesn't exist)
-    SegmentNotFound {
-        segment_number: u64,
-    },
-    
+    SegmentNotFound { segment_number: u64 },
+
     /// Error occurred
-    Error {
-        message: String,
-    },
+    Error { message: String },
 }
 
 impl SyncResponse {
@@ -75,7 +71,7 @@ impl SyncResponse {
 // ============================================================================
 
 /// Send a SyncRequest over TCP
-/// 
+///
 /// # Wire Format
 /// ```
 /// [4 bytes: length] [N bytes: bincode payload]
@@ -84,20 +80,20 @@ pub async fn send_request(stream: &mut TcpStream, request: &SyncRequest) -> Resu
     // Serialize message
     let payload = bincode::serialize(request)
         .map_err(|e| StorageError::InvalidFormat(format!("Serialize error: {}", e)))?;
-    
+
     // Send length prefix
     let len = payload.len() as u32;
     stream.write_u32_le(len).await?;
-    
+
     // Send payload
     stream.write_all(&payload).await?;
     stream.flush().await?;
-    
+
     Ok(())
 }
 
 /// Receive a SyncRequest from TCP
-/// 
+///
 /// Returns `Ok(None)` if connection is closed gracefully
 pub async fn recv_request(stream: &mut TcpStream) -> Result<Option<SyncRequest>> {
     // Read length prefix
@@ -108,7 +104,7 @@ pub async fn recv_request(stream: &mut TcpStream) -> Result<Option<SyncRequest>>
         }
         Err(e) => return Err(e.into()),
     };
-    
+
     // Validate length (prevent DoS)
     if len > 100 * 1024 * 1024 {
         return Err(StorageError::InvalidFormat(format!(
@@ -116,15 +112,15 @@ pub async fn recv_request(stream: &mut TcpStream) -> Result<Option<SyncRequest>>
             len
         )));
     }
-    
+
     // Read payload
     let mut buf = vec![0u8; len];
     stream.read_exact(&mut buf).await?;
-    
+
     // Deserialize
     let request = bincode::deserialize(&buf)
         .map_err(|e| StorageError::InvalidFormat(format!("Deserialize error: {}", e)))?;
-    
+
     Ok(Some(request))
 }
 
@@ -133,20 +129,20 @@ pub async fn send_response(stream: &mut TcpStream, response: &SyncResponse) -> R
     // Serialize message
     let payload = bincode::serialize(response)
         .map_err(|e| StorageError::InvalidFormat(format!("Serialize error: {}", e)))?;
-    
+
     // Send length prefix
     let len = payload.len() as u32;
     stream.write_u32_le(len).await?;
-    
+
     // Send payload
     stream.write_all(&payload).await?;
     stream.flush().await?;
-    
+
     Ok(())
 }
 
 /// Receive a SyncResponse from TCP
-/// 
+///
 /// Returns `Ok(None)` if connection is closed gracefully
 pub async fn recv_response(stream: &mut TcpStream) -> Result<Option<SyncResponse>> {
     // Read length prefix
@@ -157,7 +153,7 @@ pub async fn recv_response(stream: &mut TcpStream) -> Result<Option<SyncResponse
         }
         Err(e) => return Err(e.into()),
     };
-    
+
     // Validate length
     if len > 100 * 1024 * 1024 {
         return Err(StorageError::InvalidFormat(format!(
@@ -165,15 +161,15 @@ pub async fn recv_response(stream: &mut TcpStream) -> Result<Option<SyncResponse
             len
         )));
     }
-    
+
     // Read payload
     let mut buf = vec![0u8; len];
     stream.read_exact(&mut buf).await?;
-    
+
     // Deserialize
     let response = bincode::deserialize(&buf)
         .map_err(|e| StorageError::InvalidFormat(format!("Deserialize error: {}", e)))?;
-    
+
     Ok(Some(response))
 }
 
@@ -191,30 +187,30 @@ pub fn message_size<T: Serialize>(msg: &T) -> Result<usize> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    
+
     #[test]
     fn test_sync_request_serialization() {
         let request = SyncRequest::GetSegment { segment_number: 42 };
-        
+
         // Serialize
         let encoded = bincode::serialize(&request).unwrap();
         assert!(encoded.len() > 0);
-        
+
         // Deserialize
         let decoded: SyncRequest = bincode::deserialize(&encoded).unwrap();
         assert_eq!(request, decoded);
     }
-    
+
     #[test]
     fn test_sync_request_list_segments() {
         let request = SyncRequest::ListSegments;
-        
+
         let encoded = bincode::serialize(&request).unwrap();
         let decoded: SyncRequest = bincode::deserialize(&encoded).unwrap();
-        
+
         assert_eq!(request, decoded);
     }
-    
+
     #[test]
     fn test_sync_response_segment_data() {
         let entries = vec![
@@ -229,17 +225,20 @@ mod tests {
                 timestamp: 2000,
             },
         ];
-        
+
         let response = SyncResponse::SegmentData {
             segment_number: 5,
             entries: entries.clone(),
         };
-        
+
         let encoded = bincode::serialize(&response).unwrap();
         let decoded: SyncResponse = bincode::deserialize(&encoded).unwrap();
-        
+
         match decoded {
-            SyncResponse::SegmentData { segment_number, entries: decoded_entries } => {
+            SyncResponse::SegmentData {
+                segment_number,
+                entries: decoded_entries,
+            } => {
                 assert_eq!(segment_number, 5);
                 assert_eq!(decoded_entries.len(), 2);
                 assert_eq!(decoded_entries[0].key, b"key1");
@@ -247,33 +246,36 @@ mod tests {
             _ => panic!("Wrong response type"),
         }
     }
-    
+
     #[test]
     fn test_sync_response_segment_list() {
         let response = SyncResponse::SegmentList {
             segments: vec![1, 2, 3, 4],
             current_segment: 5,
         };
-        
+
         let encoded = bincode::serialize(&response).unwrap();
         let decoded: SyncResponse = bincode::deserialize(&encoded).unwrap();
-        
+
         match decoded {
-            SyncResponse::SegmentList { segments, current_segment } => {
+            SyncResponse::SegmentList {
+                segments,
+                current_segment,
+            } => {
                 assert_eq!(segments, vec![1, 2, 3, 4]);
                 assert_eq!(current_segment, 5);
             }
             _ => panic!("Wrong response type"),
         }
     }
-    
+
     #[test]
     fn test_sync_response_error() {
         let response = SyncResponse::error("Test error message");
-        
+
         let encoded = bincode::serialize(&response).unwrap();
         let decoded: SyncResponse = bincode::deserialize(&encoded).unwrap();
-        
+
         match decoded {
             SyncResponse::Error { message } => {
                 assert_eq!(message, "Test error message");
@@ -281,16 +283,16 @@ mod tests {
             _ => panic!("Wrong response type"),
         }
     }
-    
+
     #[test]
     fn test_message_size_calculation() {
         let request = SyncRequest::GetSegment { segment_number: 42 };
         let size = message_size(&request).unwrap();
-        
+
         assert!(size > 0);
         assert!(size < 100); // Should be small
     }
-    
+
     #[test]
     fn test_large_message_size() {
         // Create response with many entries
@@ -301,15 +303,15 @@ mod tests {
                 timestamp: i,
             })
             .collect();
-        
+
         let response = SyncResponse::SegmentData {
             segment_number: 1,
             entries,
         };
-        
+
         let size = message_size(&response).unwrap();
         println!("Message size: {} bytes ({} MB)", size, size / 1_048_576);
-        
+
         // Should be roughly 1MB (1000 entries * 1KB each)
         assert!(size > 900_000);
         assert!(size < 2_000_000);

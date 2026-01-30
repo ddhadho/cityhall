@@ -3,12 +3,12 @@
 
 use cityhall::metrics::metrics;
 use cityhall::{StorageEngine, Wal};
+use parking_lot::RwLock;
 use std::fs;
+use std::sync::Arc;
 use std::thread;
 use std::time::Duration;
 use tempfile::tempdir;
-use std::sync::Arc;
-use parking_lot::RwLock;
 
 #[test]
 fn test_wal_success_criteria() {

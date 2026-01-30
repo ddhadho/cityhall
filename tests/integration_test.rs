@@ -1,11 +1,11 @@
 use cityhall::{Result, StorageEngine, Wal};
+use parking_lot::RwLock;
+use std::sync::Arc;
 use std::thread;
 use std::time::Duration;
 use std::time::SystemTime;
 use tempfile::tempdir;
 use tempfile::TempDir;
-use std::sync::Arc;
-use parking_lot::RwLock;
 
 #[test]
 fn test_basic_put_and_get() -> Result<()> {
@@ -15,7 +15,7 @@ fn test_basic_put_and_get() -> Result<()> {
     let wal = Wal::new(&wal_path, 1024)?;
     let wal = Arc::new(RwLock::new(wal));
     let mut engine = StorageEngine::new(path, 1024 * 1024, wal)?;
-    
+
     engine.put(b"key1".to_vec(), b"value1".to_vec())?;
     engine.put(b"key2".to_vec(), b"value2".to_vec())?;
     engine.put(b"key3".to_vec(), b"value3".to_vec())?;
@@ -50,7 +50,7 @@ fn test_crash_recovery() -> Result<()> {
     let dir = tempdir()?;
     let dir_path = dir.path().to_path_buf();
 
-    {    
+    {
         let wal_path = dir_path.join("test.wal");
         let wal = Wal::new(&wal_path, 1024)?;
         let wal = Arc::new(RwLock::new(wal));
@@ -65,7 +65,7 @@ fn test_crash_recovery() -> Result<()> {
         let wal_path = dir_path.join("test.wal");
         let wal = Wal::new(&wal_path, 1024)?;
         let wal = Arc::new(RwLock::new(wal));
-        let mut engine = StorageEngine::new(dir_path.clone(), 1024 * 1024, wal)?;        
+        let mut engine = StorageEngine::new(dir_path.clone(), 1024 * 1024, wal)?;
 
         assert_eq!(engine.get(b"key1")?, Some(b"value1".to_vec()));
         assert_eq!(engine.get(b"key2")?, Some(b"value2".to_vec()));
@@ -143,7 +143,7 @@ fn test_memtable_flush() -> Result<()> {
 }
 
 #[test]
-fn test_empty_database() -> Result<()> {    
+fn test_empty_database() -> Result<()> {
     let dir = tempdir()?;
     let path = dir.path().to_path_buf();
     let wal_path = path.join("test.wal");
@@ -157,7 +157,6 @@ fn test_empty_database() -> Result<()> {
 
 #[test]
 fn test_binary_keys_and_values() -> Result<()> {
-    
     let dir = tempdir()?;
     let path = dir.path().to_path_buf();
     let wal_path = path.join("test.wal");
@@ -176,7 +175,6 @@ fn test_binary_keys_and_values() -> Result<()> {
 
 #[test]
 fn test_sequential_time_series_workload() -> Result<()> {
-
     let dir = tempdir()?;
     let path = dir.path().to_path_buf();
     let wal_path = path.join("test.wal");
@@ -214,7 +212,7 @@ fn test_wal_memtable_integration() -> Result<()> {
         let wal = Wal::new(&wal_path, 1024)?;
         let wal = Arc::new(RwLock::new(wal));
         let mut engine = StorageEngine::new(dir_path.clone(), 1024 * 1024, wal)?;
-        
+
         for i in 0..10 {
             let key = format!("metric_{}", i);
             let value = format!("value_{}", i);
@@ -232,7 +230,7 @@ fn test_wal_memtable_integration() -> Result<()> {
         let wal = Wal::new(&wal_path, 1024)?;
         let wal = Arc::new(RwLock::new(wal));
         let mut engine = StorageEngine::new(dir_path.clone(), 1024 * 1024, wal)?;
-        
+
         for i in 0..10 {
             let key = format!("metric_{}", i);
             let expected = format!("value_{}", i);

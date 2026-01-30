@@ -1,8 +1,8 @@
 use cityhall::replication::{ReplicationAgent, ReplicationServer};
 use cityhall::{Entry, Result, StorageEngine, Wal};
+use parking_lot::RwLock;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
-use parking_lot::RwLock;
 use tempfile::TempDir;
 use tokio::time::sleep;
 

@@ -1,12 +1,12 @@
 pub mod compaction;
 pub mod error;
+pub mod http_server;
 pub mod memtable;
 pub mod metrics;
 pub mod replication;
 pub mod sstable;
 pub mod storage_engine;
 pub mod wal;
-pub mod http_server;
 
 pub use compaction::{compact_sstables, select_sstables_for_compaction, CompactionStats};
 pub use error::{Result, StorageError};

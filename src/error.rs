@@ -28,19 +28,19 @@ pub enum StorageError {
 
     #[error("Connection failed: {0}")]
     ConnectionFailed(String),
-    
+
     #[error("Connection closed unexpectedly")]
     ConnectionClosed,
-    
+
     #[error("Operation timeout: {0}")]
     Timeout(String),
-    
+
     #[error("Leader error: {0}")]
     LeaderError(String),
-    
+
     #[error("Unexpected response from leader")]
     UnexpectedResponse,
-    
+
     #[error("Sync failed: {0}")]
     SyncFailed(String),
 }

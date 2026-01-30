@@ -3,12 +3,12 @@ use crate::metrics::metrics;
 use crate::sstable::{SsTableReader, SsTableWriter};
 use crate::{Entry, MemTable, Result, Wal};
 use crossbeam::channel::{self, Receiver, Sender};
-use std::path::{PathBuf, Path};
+use parking_lot::RwLock;
+use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::Arc;
 use std::thread;
 use std::time::{Duration, Instant, SystemTime};
-use std::sync::Arc;
-use parking_lot::RwLock;
 
 const DEFAULT_BLOCK_SIZE: usize = 16 * 1024;
 
@@ -318,7 +318,7 @@ impl StorageEngine {
 
         // ✅ Lock WAL for all operations
         let mut wal_lock = self.wal.write();
-        
+
         // Mark current segment as flushed
         wal_lock.mark_flushed()?;
 
@@ -334,7 +334,7 @@ impl StorageEngine {
                 wal_size / 1_048_576
             );
         }
-        
+
         drop(wal_lock); // Release lock
 
         Ok(())
