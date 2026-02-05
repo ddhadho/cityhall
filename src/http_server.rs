@@ -5,27 +5,17 @@ use std::time::{Instant, SystemTime, UNIX_EPOCH};
 use tokio::net::TcpListener;
 use tower_http::cors::CorsLayer;
 
-use crate::replication::metrics::ReplicationMetrics;
-use crate::replication::registry::ReplicaRegistry;
-use crate::replication::ConnectionState;
-
 #[derive(Clone)]
 pub struct AppState {
-    pub metrics: Arc<ReplicationMetrics>,
-    pub replica_registry: Arc<ReplicaRegistry>,
     pub current_wal_segment: Arc<tokio::sync::RwLock<u64>>,
     pub start_time: Instant,
 }
 
 pub async fn start_dashboard_server(
-    metrics: Arc<ReplicationMetrics>,
-    replica_registry: Arc<ReplicaRegistry>,
     current_wal_segment: Arc<tokio::sync::RwLock<u64>>,
     start_time: Instant,
 ) {
     let state = AppState {
-        metrics,
-        replica_registry,
         current_wal_segment,
         start_time,
     };
@@ -63,27 +53,10 @@ pub struct DashboardMetrics {
     pub node_id: String,
     pub uptime_seconds: u64,
 
-    // Replication
-    pub total_entries: u64,
-    pub wal_segments: u64,
-    pub replicas: Vec<ReplicaDashboardInfo>,
-    pub connected_count: usize,
-    pub throughput_entries_per_sec: f64,
-
     // Storage
     pub storage_metrics: StorageMetrics,
 
     pub last_updated: u64,
-}
-
-#[derive(Serialize)]
-pub struct ReplicaDashboardInfo {
-    pub replica_id: String,
-    pub status: String,
-    pub last_segment: u64,
-    pub lag_segments: i64,
-    pub last_seen_ago_secs: u64,
-    pub bytes_sent: u64,
 }
 
 #[derive(Serialize)]
@@ -124,40 +97,7 @@ HANDLERS
 ========================= */
 
 async fn get_metrics(State(state): State<AppState>) -> Json<DashboardMetrics> {
-    let current_segment = *state.current_wal_segment.read().await;
-    let replicas_info = state.replica_registry.get_all().await;
-
-    let replicas: Vec<ReplicaDashboardInfo> = replicas_info
-        .iter()
-        .map(|info| {
-            let lag = current_segment as i64 - info.last_segment_requested as i64;
-            let last_seen = info.last_heartbeat.elapsed().as_secs();
-
-            ReplicaDashboardInfo {
-                replica_id: info.replica_id.clone(),
-                status: format!("{:?}", info.connection_state),
-                last_segment: info.last_segment_requested,
-                lag_segments: lag.max(0),
-                last_seen_ago_secs: last_seen,
-                bytes_sent: info.bytes_sent,
-            }
-        })
-        .collect();
-
-    let connected_count = replicas_info
-        .iter()
-        .filter(|r| r.connection_state != ConnectionState::Offline)
-        .count();
-
     let metrics = crate::metrics::metrics();
-
-    // Calculate throughput since leader start
-    let uptime_secs = state.start_time.elapsed().as_secs_f64();
-    let throughput = if uptime_secs > 0.0 {
-        metrics.writes_total.get() as f64 / uptime_secs
-    } else {
-        0.0
-    };
 
     let storage_metrics = StorageMetrics {
         // Operations
@@ -198,15 +138,7 @@ async fn get_metrics(State(state): State<AppState>) -> Json<DashboardMetrics> {
             .and_then(|h| h.into_string().ok())
             .unwrap_or_else(|| "leader-main".to_string()),
         uptime_seconds: state.start_time.elapsed().as_secs(),
-
-        total_entries: metrics.writes_total.get(),
-        wal_segments: current_segment,
-        replicas,
-        connected_count,
-        throughput_entries_per_sec: throughput,
-
         storage_metrics,
-
         last_updated: SystemTime::now()
             .duration_since(UNIX_EPOCH)
             .unwrap()
