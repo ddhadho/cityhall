@@ -12,11 +12,11 @@
         <!-- Header -->
         <div class="mb-8">
             <h1 class="text-4xl font-bold mb-2">🏙️ CityHall Dashboard</h1>
-            <p class="text-gray-600">Real-time Storage Engine & Replication Monitoring</p>
+            <p class="text-gray-600">Real-time Storage Engine Monitoring</p>
         </div>
 
         <!-- Top Stats Cards -->
-        <div class="grid grid-cols-5 gap-4 mb-8">
+        <div class="grid grid-cols-4 gap-4 mb-8">
             <div class="bg-white p-6 rounded-lg shadow">
                 <div class="text-sm text-gray-500">Total Writes</div>
                 <div id="totalWrites" class="text-3xl font-bold text-blue-600">-</div>
@@ -28,10 +28,6 @@
             <div class="bg-white p-6 rounded-lg shadow">
                 <div class="text-sm text-gray-500">Read Hit Rate</div>
                 <div id="readHitRate" class="text-3xl font-bold text-purple-600">-</div>
-            </div>
-            <div class="bg-white p-6 rounded-lg shadow">
-                <div class="text-sm text-gray-500">Connected Replicas</div>
-                <div id="connectedCount" class="text-3xl font-bold text-green-600">-</div>
             </div>
             <div class="bg-white p-6 rounded-lg shadow">
                 <div class="text-sm text-gray-500">Uptime</div>
@@ -89,38 +85,6 @@
                 <canvas id="readLatencyChart"></canvas>
             </div>
         </div>
-
-        <!-- Charts Row 2: Replication -->
-        <div class="grid grid-cols-2 gap-6 mb-8">
-            <div class="bg-white p-6 rounded-lg shadow">
-                <h3 class="text-lg font-semibold mb-4">Replication Lag (Segments)</h3>
-                <canvas id="lagChart"></canvas>
-            </div>
-            <div class="bg-white p-6 rounded-lg shadow">
-                <h3 class="text-lg font-semibold mb-4">Throughput (entries/sec)</h3>
-                <canvas id="throughputChart"></canvas>
-            </div>
-        </div>
-
-        <!-- Replica Table -->
-        <div class="bg-white p-6 rounded-lg shadow">
-            <h3 class="text-lg font-semibold mb-4">🔄 Replica Status</h3>
-            <table class="w-full">
-                <thead class="border-b">
-                    <tr>
-                        <th class="text-left p-2">Replica ID</th>
-                        <th class="text-left p-2">Status</th>
-                        <th class="text-left p-2">Last Segment</th>
-                        <th class="text-left p-2">Lag (Segments)</th>
-                        <th class="text-left p-2">Last Seen</th>
-                        <th class="text-left p-2">Bytes Sent</th>
-                    </tr>
-                </thead>
-                <tbody id="replicaTable">
-                    <tr><td colspan="6" class="text-center p-8 text-gray-400">No replicas connected</td></tr>
-                </tbody>
-            </table>
-        </div>
     </div>
 
     <script>
@@ -157,41 +121,6 @@
             }
         });
 
-        const lagChart = new Chart(document.getElementById('lagChart'), {
-            type: 'bar',
-            data: {
-                labels: [],
-                datasets: [{
-                    label: 'Segments Behind',
-                    data: [],
-                    backgroundColor: 'rgba(59, 130, 246, 0.5)',
-                }]
-            },
-            options: {
-                responsive: true,
-                scales: { y: { beginAtZero: true } }
-            }
-        });
-
-        const throughputChart = new Chart(document.getElementById('throughputChart'), {
-            type: 'line',
-            data: {
-                labels: [],
-                datasets: [{
-                    label: 'Entries/sec',
-                    data: [],
-                    borderColor: 'rgb(16, 185, 129)',
-                    tension: 0.4
-                }]
-            },
-            options: {
-                responsive: true,
-                scales: { y: { beginAtZero: true } }
-            }
-        });
-
-        const throughputHistory = [];
-
         async function updateDashboard() {
             try {
                 const res = await fetch('/api/metrics');
@@ -201,7 +130,6 @@
                 document.getElementById('totalWrites').textContent = data.storage_metrics.writes_total.toLocaleString();
                 document.getElementById('totalReads').textContent = data.storage_metrics.reads_total.toLocaleString();
                 document.getElementById('readHitRate').textContent = (data.storage_metrics.read_hit_rate * 100).toFixed(1) + '%';
-                document.getElementById('connectedCount').textContent = data.connected_count;
                 document.getElementById('uptime').textContent = formatUptime(data.uptime_seconds);
 
                 // Update storage metrics
@@ -227,63 +155,15 @@
                 ];
                 readLatencyChart.update();
 
-                // Update replication charts
-                lagChart.data.labels = data.replicas.map(r => r.replica_id.substring(0, 8));
-                lagChart.data.datasets[0].data = data.replicas.map(r => r.lag_segments);
-                lagChart.update();
-
-                throughputHistory.push(data.throughput_entries_per_sec);
-                if (throughputHistory.length > 20) throughputHistory.shift();
-                
-                throughputChart.data.labels = throughputHistory.map((_, i) => i);
-                throughputChart.data.datasets[0].data = throughputHistory;
-                throughputChart.update();
-
-                // Update replica table
-                updateReplicaTable(data.replicas);
             } catch (e) {
                 console.error('Failed to fetch metrics:', e);
             }
-        }
-
-        function updateReplicaTable(replicas) {
-            const tbody = document.getElementById('replicaTable');
-            if (replicas.length === 0) {
-                tbody.innerHTML = '<tr><td colspan="6" class="text-center p-8 text-gray-400">No replicas connected</td></tr>';
-                return;
-            }
-
-            tbody.innerHTML = replicas.map(r => `
-                <tr class="border-b hover:bg-gray-50">
-                    <td class="p-2 font-mono text-sm">${r.replica_id.substring(0, 12)}</td>
-                    <td class="p-2">${getStatusBadge(r.status)}</td>
-                    <td class="p-2">${r.last_segment}</td>
-                    <td class="p-2 ${r.lag_segments > 2 ? 'text-red-600 font-bold' : 'text-green-600'}">${r.lag_segments}</td>
-                    <td class="p-2 text-sm text-gray-600">${r.last_seen_ago_secs}s ago</td>
-                    <td class="p-2 text-sm text-gray-600">${formatBytes(r.bytes_sent)}</td>
-                </tr>
-            `).join('');
-        }
-
-        function getStatusBadge(status) {
-            const colors = {
-                'Connected': 'bg-green-100 text-green-800',
-                'Syncing': 'bg-blue-100 text-blue-800',
-                'Offline': 'bg-red-100 text-red-800'
-            };
-            return `<span class="px-2 py-1 rounded text-xs ${colors[status] || 'bg-gray-100'}">${status}</span>`;
         }
 
         function formatUptime(seconds) {
             const h = Math.floor(seconds / 3600);
             const m = Math.floor((seconds % 3600) / 60);
             return `${h}h ${m}m`;
-        }
-
-        function formatBytes(bytes) {
-            if (bytes < 1024) return bytes + ' B';
-            if (bytes < 1048576) return (bytes / 1024).toFixed(1) + ' KB';
-            return (bytes / 1048576).toFixed(1) + ' MB';
         }
 
         // Auto-refresh every second
