@@ -3,7 +3,7 @@ pub mod error;
 pub mod http_server;
 pub mod memtable;
 pub mod metrics;
-pub mod replication;
+
 pub mod sstable;
 pub mod storage_engine;
 pub mod wal;
