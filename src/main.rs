@@ -9,13 +9,13 @@ async fn main() -> cityhall::Result<()> {
     let cli = Cli::parse();
 
     match cli.command {
-        Commands::Leader {
+        Commands::Server {
             data_dir,
             port,
             wal_buffer_size,
             config: _,
         } => {
-            commands::leader::run_leader(data_dir, port, wal_buffer_size).await?;
+            commands::server::run_server(data_dir, port, wal_buffer_size).await?;
         }
 
         Commands::Client { addr, command } => match command {
