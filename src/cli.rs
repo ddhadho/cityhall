@@ -17,10 +17,10 @@ pub struct Cli {
 /// Available commands
 #[derive(Subcommand, Debug)]
 pub enum Commands {
-    /// Start CityHall in leader mode (accepts writes)
-    Leader {
+    /// Start CityHall in server mode (accepts writes)
+    Server {
         /// Data directory for WAL and state
-        #[arg(long, default_value = "~/.cityhall/leader")]
+        #[arg(long, default_value = "~/.cityhall/server")]
         data_dir: PathBuf,
 
         /// Port for client connections
@@ -88,26 +88,26 @@ mod tests {
     use super::*;
 
     #[test]
-    fn test_parse_leader_command() {
+    fn test_parse_server_command() {
         let cli = Cli::parse_from(&[
             "cityhall",
-            "leader",
+            "server",
             "--data-dir",
-            "/data/leader",
+            "/data/server",
             "--port",
             "8000",
         ]);
 
         match cli.command {
-            Commands::Leader {
+            Commands::Server {
                 data_dir,
                 port,
                 ..
             } => {
-                assert_eq!(data_dir, PathBuf::from("/data/leader"));
+                assert_eq!(data_dir, PathBuf::from("/data/server"));
                 assert_eq!(port, 8000);
             }
-            _ => panic!("Expected Leader command"),
+            _ => panic!("Expected Server command"),
         }
     }
 
@@ -154,10 +154,10 @@ mod tests {
 
     #[test]
     fn test_default_values() {
-        let cli = Cli::parse_from(&["cityhall", "leader"]);
+        let cli = Cli::parse_from(&["cityhall", "server"]);
 
         match cli.command {
-            Commands::Leader {
+            Commands::Server {
                 port,
                 wal_buffer_size,
                 ..
@@ -165,7 +165,7 @@ mod tests {
                 assert_eq!(port, 7878);
                 assert_eq!(wal_buffer_size, 1048576);
             }
-            _ => panic!("Expected Leader command"),
+            _ => panic!("Expected Server command"),
         }
     }
 }
