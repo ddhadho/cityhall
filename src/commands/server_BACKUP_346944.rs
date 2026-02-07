@@ -2,16 +2,31 @@
 //! 
 //! Starts CityHall in standalone server mode with:
 //! - Client server for writes/reads (using full StorageEngine)
+<<<<<<< HEAD:src/commands/server.rs
 //! - Shared WAL between StorageEngine and compaction
 use cityhall::Result;
 use cityhall::{http_server, StorageEngine};
 use parking_lot::Mutex;
+=======
+//! - Replication server for serving replicas
+//! - Shared WAL between StorageEngine and replication
+
+use cityhall::replication::metrics::ReplicationMetrics;
+use cityhall::replication::ReplicationServer;
+use cityhall::replication::registry::ReplicaRegistry; 
+use cityhall::{StorageEngine, http_server}; 
+use cityhall::Result;
+>>>>>>> main:src/commands/leader.rs
 use std::path::PathBuf;
 use std::sync::Arc;
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 use tokio::net::{TcpListener, TcpStream};
+<<<<<<< HEAD:src/commands/server.rs
 use tokio::signal;
 use tokio::sync::RwLock;
+=======
+use tokio::sync::RwLock; 
+>>>>>>> main:src/commands/leader.rs
 
 /// Default MemTable size: 4MB
 const DEFAULT_MEMTABLE_SIZE: usize = 4 * 1024 * 1024;
@@ -29,6 +44,11 @@ pub async fn run_server(
     println!("💾 WAL buffer: {} bytes", wal_buffer_size);
     println!("📊 MemTable size: {} MB", DEFAULT_MEMTABLE_SIZE / 1_048_576);
     println!();
+<<<<<<< HEAD:src/commands/server.rs
+
+=======
+    
+>>>>>>> main:src/commands/leader.rs
     let start_time = std::time::Instant::now();
 
     // Create data directory
@@ -46,6 +66,7 @@ pub async fn run_server(
     let storage = Arc::new(Mutex::new(storage_engine));
     println!("✓ StorageEngine initialized");
 
+<<<<<<< HEAD:src/commands/server.rs
 
     // Initialize shared current WAL segment (for dashboard)
     let current_wal_segment = Arc::new(RwLock::new(wal.read().current_segment_number())); // NEW
@@ -73,6 +94,57 @@ pub async fn run_server(
     });
     println!("✓ WAL segment tracker background task started");
 
+=======
+    // Initialize Replica Registry
+    let replica_registry = Arc::new(ReplicaRegistry::new()); 
+    println!("✓ Replica Registry initialized");
+
+    // NEW: Create replication metrics
+    let replication_metrics = Arc::new(ReplicationMetrics::new());
+    println!("✓ Replication Metrics initialized");
+
+    // Initialize shared current WAL segment (for dashboard)
+    let current_wal_segment = Arc::new(RwLock::new(wal.read().current_segment_number())); // NEW
+    println!("✓ Current WAL segment tracker initialized (current: {})", *current_wal_segment.read().await);
+
+    // Get WAL for replication (same instance used by StorageEngine)
+    let replication_wal = {
+        let engine = storage.lock();
+        engine.get_wal()
+    };
+    
+    // Start replication server
+    // MODIFIED: Pass replica_registry to ReplicationServer::new
+    let replication_server = ReplicationServer::new(replication_wal, Arc::clone(&replica_registry), replication_port);
+    let replication_handle = tokio::spawn(async move {
+        if let Err(e) = replication_server.serve().await {
+            eprintln!("❌ Replication server error: {}", e);
+        }
+    });
+    println!("✓ Replication server started on port {}", replication_port);
+
+    // Start Dashboard HTTP server
+    let dashboard_handle = tokio::spawn(http_server::start_dashboard_server( 
+        Arc::clone(&replication_metrics), 
+        Arc::clone(&replica_registry),
+        Arc::clone(&current_wal_segment),
+        start_time, 
+    ));
+    println!("✓ Dashboard HTTP server started");
+
+    // Update current WAL segment periodically (for dashboard)
+    let wal_clone = Arc::clone(&wal);
+    let segment_tracker = Arc::clone(&current_wal_segment);
+    tokio::spawn(async move {
+        loop {
+            tokio::time::sleep(tokio::time::Duration::from_secs(1)).await;
+            let current = wal_clone.read().current_segment_number();
+            *segment_tracker.write().await = current;
+        }
+    });
+    println!("✓ WAL segment tracker background task started");
+    
+>>>>>>> main:src/commands/leader.rs
     // Start client server
     let client_addr = format!("0.0.0.0:{}", port);
     let listener = TcpListener::bind(&client_addr).await?;
@@ -107,12 +179,24 @@ pub async fn run_server(
         }
     });
 
+<<<<<<< HEAD:src/commands/server.rs
     // Start dashboard with all parameters
     tokio::spawn(http_server::start_dashboard_server(
         Arc::clone(&current_wal_segment),
         start_time, // NEW: Pass start time
     ));
 
+=======
+
+    // Start dashboard with all parameters
+    tokio::spawn(http_server::start_dashboard_server(
+        Arc::clone(&replication_metrics),
+        Arc::clone(&replica_registry),
+        Arc::clone(&current_wal_segment),
+        start_time,  // NEW: Pass start time
+    ));
+    
+>>>>>>> main:src/commands/leader.rs
     // Wait for shutdown signal
     tokio::select! {
         _ = signal::ctrl_c() => {

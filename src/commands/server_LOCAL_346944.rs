@@ -29,6 +29,7 @@ pub async fn run_server(
     println!("💾 WAL buffer: {} bytes", wal_buffer_size);
     println!("📊 MemTable size: {} MB", DEFAULT_MEMTABLE_SIZE / 1_048_576);
     println!();
+
     let start_time = std::time::Instant::now();
 
     // Create data directory
@@ -119,9 +120,6 @@ pub async fn run_server(
             println!();
             println!("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━");
             println!("📴 Shutting down server...");
-        }
-        _ = dashboard_handle => { // NEW
-            println!("⚠️  Dashboard HTTP server stopped unexpectedly");
         }
         _ = dashboard_handle => { // NEW
             println!("⚠️  Dashboard HTTP server stopped unexpectedly");
