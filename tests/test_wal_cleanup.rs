@@ -2,14 +2,11 @@
 
 use cityhall::metrics::metrics;
 use cityhall::{StorageEngine, Wal};
+use parking_lot::RwLock;
+use std::sync::Arc;
 use std::thread;
 use std::time::Duration;
 use tempfile::tempdir;
-use std::sync::Arc;
-use parking_lot::RwLock;
-
-
-
 
 #[test]
 fn test_wal_cleanup() {
@@ -20,7 +17,7 @@ fn test_wal_cleanup() {
     let wal = Wal::new(&wal_path, 1024).unwrap();
     let wal = Arc::new(RwLock::new(wal));
     let mut engine = StorageEngine::new(path, memtable_size, wal).unwrap();
-        
+
     // Reset metrics
     metrics().reset();
 
@@ -133,7 +130,7 @@ fn test_wal_recovery_after_cleanup() {
         let wal = Wal::new(&wal_path, 1024).unwrap();
         let wal = Arc::new(RwLock::new(wal));
         let mut engine = StorageEngine::new(path, memtable_size, wal).unwrap();
-                
+
         // Write first batch
         for i in 0..1000 {
             engine
@@ -176,7 +173,7 @@ fn test_wal_recovery_after_cleanup() {
         let wal = Wal::new(&wal_path, 1024).unwrap();
         let wal = Arc::new(RwLock::new(wal));
         let mut engine = StorageEngine::new(path, memtable_size, wal).unwrap();
-                
+
         // Should recover data from remaining WAL segments
         println!("  Checking recovered data...");
 
@@ -222,7 +219,7 @@ fn test_wal_segment_rotation() {
     let wal = Wal::new(&wal_path, 1024).unwrap();
     let wal = Arc::new(RwLock::new(wal));
     let mut engine = StorageEngine::new(path, memtable_size, wal).unwrap();
-        
+
     println!("\n=== Testing WAL Segment Rotation ===\n");
 
     // Write enough data to force segment rotation

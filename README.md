@@ -1,246 +1,44 @@
 # CityHall 🏙️
 
 ---
-> ### 🏆 Rust Africa Hackathon 2026 Submission
->
-> **Track**: Infrastructure & Connectivity  
-> **Focus**: CityHall Sync - WAL-based replication for offline-first edge computing
->
-> Built for intermittent connectivity, expensive bandwidth, and power instability.
----
 
-## 🌍 The Problem: African Infrastructure Reality
+## CityHall: Key Features
 
-**60% of African businesses face daily internet outages.** Traditional cloud-only databases fail when the network drops. Data is lost. Operations halt. Businesses suffer.
+CityHall is a robust, crash-resilient time-series database designed for efficient data storage and retrieval.
 
-**CityHall Sync solves this**: A distributed, offline-first time-series database that continues working when the internet doesn't.
+### Core Features
 
-### Real-World Scenarios
-
-**🏭 Factory Floor (Nairobi)**
-- 100 sensors collecting temperature data every second
-- Internet drops for 8 hours (common with Safaricom 4G in industrial areas)
-- **Traditional systems**: Data lost or buffered until memory exhausted
-- **CityHall Sync**: Continues collecting locally, syncs all 2.88M entries in 4 minutes when online
-
-**🏥 Rural Health Clinic (Rwanda)**
-- Doctor needs patient vital signs history
-- Clinic 50km from cell tower, satellite link available 2x/day
-- **Traditional systems**: Cannot access records without internet
-- **CityHall Sync**: Local replica has all data, syncs with central hospital when satellite connects
-
-**🛒 Retail Chain (East Africa)**
-- 50 stores across Kenya, Tanzania, Uganda
-- Each store needs POS transaction storage
-- HQ needs consolidated analytics
-- **Traditional systems**: $4,050/month bandwidth costs (JSON over HTTP)
-- **CityHall Sync**: $405/month (10x more efficient) + works offline
+**Crash-Resilient Durability**: Zero data loss on power failure with atomic state persistence.  
+**High Throughput**: Optimized for high-volume data ingestion and retrieval.  
+**Efficient Storage**: Utilizes advanced techniques for compact data storage.  
 
 ---
 
-## 🎯 CityHall Sync: The Hackathon Innovation
-
-**CityHall Sync** is a WAL-based replication system built on top of the CityHall storage engine. This is the core innovation for this hackathon submission.
-
-### Key Features
-
-✅ **Offline-First**: Leader and replicas operate independently without constant network  
-✅ **Crash-Resilient**: Zero data loss on power failure (state persists atomically)  
-✅ **Bandwidth-Efficient**: 10x smaller than JSON (bincode + compression)  
-✅ **Fast Recovery**: Catch up from multi-day outages in minutes  
-✅ **Scalable**: Handles 10+ replicas with minimal overhead  
-
-### Architecture
-```
-┌─────────────────────────────────────────────────────────────┐
-│                    LEADER NODE (Factory)                    │
-│  ┌──────────┐      ┌──────────┐      ┌──────────┐          │
-│  │ Sensors  │ ───▶ │   WAL    │ ───▶ │ SSTables │          │
-│  └──────────┘      └──────────┘      └──────────┘          │
-│                          │                                  │
-└──────────────────────────┼──────────────────────────────────┘
-                           │ WAL Segment Streaming
-                           │ (Pull-based, TCP)
-                           ▼
-         ┌─────────────────────────────────────┐
-         │                                     │
-         ▼                                     ▼
-┌──────────────────┐                  ┌──────────────────┐
-│ REPLICA (Office) │                  │ REPLICA (Cloud)  │
-│  ┌────────────┐  │                  │  ┌────────────┐  │
-│  │ Local WAL  │  │                  │  │ Local WAL  │  │
-│  └────────────┘  │                  │  └────────────┘  │
-│  ┌────────────┐  │                  │  ┌────────────┐  │
-│  │  SSTables  │  │                  │  │  SSTables  │  │
-│  └────────────┘  │                  │  └────────────┘  │
-└──────────────────┘                  └──────────────────┘
-```
-
-**Design Decisions:**
-- **WAL-based vs Snapshot-based**: Stream deltas (KB) not full snapshots (GB)
-- **Pull-based vs Push**: Replicas control pace, adapt to network conditions
-- **Eventual consistency**: Availability > consistency for metrics collection
-
-### Novel Approaches
-
-**1. Persistent Replica State**
-- Unlike PostgreSQL (in-memory), CityHall persists `last_applied_seq` to disk
-- Survives crashes without full re-sync
-
-**2. Segment Discovery Protocol**
-- Replicas query leader for available segments before syncing
-- Handles leader/replica timing skew gracefully
-
-**3. Exponential Backoff with Jitter**
-- Prevents thundering herd when 50 replicas reconnect after regional outage
-- Adaptive retry intervals (1s → 60s)
-
-**4. Replica-Aware WAL Cleanup**
-- Leader tracks minimum replica position before deleting old segments
-- Ensures no data loss even if replica offline for days
-
-### Performance: Measured & Proven
-
-| Metric | Result | Real-World Impact |
-|--------|--------|-------------------|
-| **Replication Latency** | 70ms avg (52-140ms) | Near-real-time for LAN |
-| **Catch-up Throughput** | 3,000 entries/sec | 8hr outage recovers in 16 min |
-| **Multiple Replicas** | 3 nodes in 3.26ms | Scales to 50+ stores |
-| **Bandwidth/Entry** | 1.8 KB (vs 18 KB JSON) | **$81/month saved** per site |
-| **Data Loss** | Zero (verified) | Survives power failures |
-
-**Full benchmarks**: [BENCHMARKS.md](BENCHMARKS.md) | **Design doc**: [REPLICATION_DESIGN.md](REPLICATION_DESIGN.md)
-
----
-
-## 🚀 Quick Start: Demo the Replication System
-
-### Prerequisites
-```bash
-# Clone repository
-git clone https://github.com/ddhadho/cityhall.git
-cd cityhall
-
-# Build in release mode
-cargo build --release
-```
-
-### 3-Terminal Demo
-
-**Terminal 1: Start Leader**
-```bash
-./target/release/cityhall leader --data-dir /tmp/leader --replication-port 7879
-```
-
-**Terminal 2: Start Replica**
-```bash
-./target/release/cityhall replica --leader 127.0.0.1:7879 --data-dir /tmp/replica1
-```
-
-**Terminal 3: Write Data to Leader**
-```bash
-# Write 100 sensor readings
-for i in {1..100}; do
-  ./target/release/cityhall client put "sensor.temp.line_$i" "$(shuf -i 20-30 -n 1).5"
-done
-
-# Check replica status (should show synced data)
-./target/release/cityhall replica status --data-dir /tmp/replica1
-# Output: Last synced segment: 1, Total entries: 100
-```
-
-### Offline Recovery Demo
-```bash
-# In Terminal 2: Kill the replica (Ctrl+C)
-
-# In Terminal 3: Leader continues - write 500 more entries
-for i in {101..600}; do
-  ./target/release/cityhall client put "sensor.temp.$i" "25.0"
-done
-
-# In Terminal 2: Restart replica - watch it catch up
-./target/release/cityhall replica --leader 127.0.0.1:7879 --data-dir /tmp/replica1
-
-# Observe: Catches up 500 entries in ~200ms
-# Check status again
-./target/release/cityhall replica status --data-dir /tmp/replica1
-# Output: Last synced segment: 2, Total entries: 600
-```
-
-**This demonstrates:**
-- ✅ Offline resilience (replica can be down for hours/days)
-- ✅ Fast catch-up (500 entries in 200ms)
-- ✅ Zero data loss (all 600 entries present)
-
----
-
-## 💰 Cost Savings Analysis
-
-### Bandwidth Comparison (Safaricom Kenya @ $5/GB)
-
-| System | Per Entry | 1M Entries/Day | Monthly Cost |
-|--------|-----------|----------------|--------------|
-| **CityHall Sync** | 1.8 KB | 1.8 GB | **$9** |
-| JSON-over-HTTP | 18 KB | 18 GB | $90 |
-| **Savings** | **10x smaller** | 16.2 GB | **$81/month** |
-
-**Real-World Impact:**
-- **Single factory**: $972/year saved
-- **10-store chain**: $9,720/year saved
-- **50-store chain**: **$48,600/year saved**
-
----
-
-## 🧪 Testing & Validation
+## Testing & Validation
 
 ### Integration Tests (All Passing)
 
-- ✅ Basic replication (100 entries synced)
-- ✅ Offline recovery (replica catches up after simulated 8hr outage)
-- ✅ Multiple replicas (3 nodes converge to same state)
-- ✅ Network partitions (exponential backoff on reconnect)
-- ✅ Concurrent operations (1000 writes + 5000 reads simultaneously)
-- ✅ Crash recovery (state persists across restarts, zero data loss)
-- ✅ High throughput (10,000 entries replicated in < 2s)
 ```bash
 # Run all tests
 cargo test
-
-# Run replication benchmarks with output
-cargo test --test replication_benchmarks -- --nocapture
-
-# Run integration tests
-cargo test --test integration_sync -- --nocapture
 ```
 
 **Zero compiler warnings. All tests pass.**
 
 ---
 
-## 🧑‍💻 Authorship & AI Collaboration
-
-**Transparency Statement** :
-
-- **Human Architect**: System design, architecture decisions, performance benchmarking, debugging, documentation
-- **AI Assistant** (Claude by Anthropic): Line-by-line code generation under direct human guidance
-
-This collaboration enabled rapid implementation of a complex distributed system while I maintained full architectural control.
-
----
-
-## 📚 Documentation
+## Documentation
 
 - **[BENCHMARKS.md](BENCHMARKS.md)** - Performance analysis with real measurements
-- **[REPLICATION_DESIGN.md](REPLICATION_DESIGN.md)** - Technical deep-dive on protocol
 - **[ARCHITECTURE.md](ARCHITECTURE.md)** - Storage engine internals
 
 ---
 
 ---
 
-# 🗄️ The Storage Engine: CityHall Core
+# The Storage Engine: CityHall Core
 
-> **Note**: The following section describes the underlying storage engine that CityHall Sync is built on top of. 
+> **Note**: The following section describes the underlying storage engine that CityHall is built on top of. 
 
 ---
 
