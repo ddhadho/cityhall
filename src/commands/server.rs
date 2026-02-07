@@ -120,10 +120,7 @@ pub async fn run_server(
             println!("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━");
             println!("📴 Shutting down server...");
         }
-        _ = dashboard_handle => { // NEW
-            println!("⚠️  Dashboard HTTP server stopped unexpectedly");
-        }
-        _ = dashboard_handle => { // NEW
+        _ = dashboard_handle => {
             println!("⚠️  Dashboard HTTP server stopped unexpectedly");
         }
     }
