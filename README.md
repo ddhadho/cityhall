@@ -42,13 +42,11 @@ cargo test
 
 ---
 
-## Philosophy
+## About
 
-**CityHall is the administrative core for your personal machine.** Just as a city hall manages the official records and services of a city, CityHall is a foundational service that manages the data of your "digital city"—your personal computer.
+**CityHall is the administrative core for your personal machine.** 
 
-This project is a deep dive into the art of systems engineering, built as a portfolio piece to demonstrate a mastery of the principles behind modern storage engines. It's an exploration of trade-offs, performance optimization, and robust, production-grade patterns.
-
-The engine is built on a **Log-Structured Merge-Tree (LSM-Tree)**, the same architecture that powers databases like RocksDB, Cassandra, and InfluxDB.
+The engine is built on a **Log-Structured Merge-Tree (LSM-Tree)**.
 
 ## Core Storage Engine Features
 
@@ -61,8 +59,6 @@ The engine is built on a **Log-Structured Merge-Tree (LSM-Tree)**, the same arch
 -   **Robust Command-Line Interface**: A versatile CLI (`cityhall`) acts as a client to the running daemon, enabling `put`, `get` commands and future expansion.
 
 ## Storage Engine Performance
-
-Every optimization is backed by data. CityHall is not just correct; it's efficient.
 
 | Feature               | Metric                | Result                                       |
 | --------------------- | --------------------- | -------------------------------------------- |
@@ -145,7 +141,6 @@ The `cityhall` CLI is the primary way to interact with the running daemon. By de
 CityHall is an active portfolio project. Future areas of focus include:
 
 -   [ ] **Delete Support**: Implementing a robust mechanism for key deletions using tombstones, handled correctly throughout the WAL, MemTables, and compaction.
--   [ ] **Metrics Command**: Exposing internal metrics via a dedicated client command (`cityhall client metrics`).
 -   [ ] **System Monitoring Agent**: Building a separate tool to automatically feed system performance metrics into CityHall itself.
 -   [ ] **Block Cache**: Introducing an in-memory LRU cache for SSTable data blocks to reduce disk I/O for hot data.
 -   [ ] **Leveled Compaction**: Migrating from size-tiered to a more optimal leveled compaction strategy for better read performance.
