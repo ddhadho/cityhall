@@ -1,180 +1,699 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>CityHall Dashboard</title>
-    <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
-    <script src="https://cdn.tailwindcss.com"></script>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>CityHall — Storage Engine Monitor</title>
+  <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
+  <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@300;400;500;700&family=Syne:wght@400;700;800&display=swap" rel="stylesheet" />
+  <style>
+    :root {
+      --bg:        #0d0f12;
+      --surface:   #13161b;
+      --border:    #1e2229;
+      --muted:     #3a3f4a;
+      --text:      #c8cdd6;
+      --dim:       #6b7280;
+      --amber:     #f59e0b;
+      --amber-dim: #78490a;
+      --green:     #22c55e;
+      --green-dim: #14532d;
+      --blue:      #38bdf8;
+      --blue-dim:  #0c4a6e;
+      --red:       #f87171;
+      --red-dim:   #7f1d1d;
+    }
+
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+
+    body {
+      background: var(--bg);
+      color: var(--text);
+      font-family: 'JetBrains Mono', monospace;
+      font-size: 13px;
+      min-height: 100vh;
+      padding: 24px;
+    }
+
+    /* scanline overlay for atmosphere */
+    body::before {
+      content: '';
+      position: fixed;
+      inset: 0;
+      background: repeating-linear-gradient(
+        0deg,
+        transparent,
+        transparent 2px,
+        rgba(0,0,0,0.03) 2px,
+        rgba(0,0,0,0.03) 4px
+      );
+      pointer-events: none;
+      z-index: 1000;
+    }
+
+    .wrap { max-width: 1400px; margin: 0 auto; }
+
+    /* ── Header ── */
+    header {
+      display: flex;
+      align-items: baseline;
+      justify-content: space-between;
+      border-bottom: 1px solid var(--border);
+      padding-bottom: 16px;
+      margin-bottom: 28px;
+    }
+
+    .logo {
+      font-family: 'Syne', sans-serif;
+      font-weight: 800;
+      font-size: 22px;
+      letter-spacing: -0.5px;
+      color: #fff;
+    }
+
+    .logo span { color: var(--amber); }
+
+    .status-bar {
+      display: flex;
+      align-items: center;
+      gap: 20px;
+      font-size: 11px;
+      color: var(--dim);
+    }
+
+    .dot {
+      width: 7px; height: 7px;
+      border-radius: 50%;
+      background: var(--green);
+      box-shadow: 0 0 6px var(--green);
+      animation: pulse 2s infinite;
+    }
+    .dot.error { background: var(--red); box-shadow: 0 0 6px var(--red); animation: none; }
+
+    @keyframes pulse {
+      0%, 100% { opacity: 1; }
+      50%       { opacity: 0.4; }
+    }
+
+    #uptime-display { color: var(--amber); }
+    #node-display   { color: var(--text); }
+
+    /* ── Stat cards ── */
+    .cards {
+      display: grid;
+      grid-template-columns: repeat(4, 1fr);
+      gap: 12px;
+      margin-bottom: 20px;
+    }
+
+    .card {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: 6px;
+      padding: 16px 18px;
+      position: relative;
+      overflow: hidden;
+      transition: border-color 0.2s;
+    }
+
+    .card:hover { border-color: var(--muted); }
+
+    .card::before {
+      content: '';
+      position: absolute;
+      top: 0; left: 0; right: 0;
+      height: 2px;
+    }
+
+    .card.amber::before { background: var(--amber); }
+    .card.green::before { background: var(--green); }
+    .card.blue::before  { background: var(--blue);  }
+    .card.red::before   { background: var(--red);   }
+
+    .card-label {
+      font-size: 10px;
+      text-transform: uppercase;
+      letter-spacing: 1.5px;
+      color: var(--dim);
+      margin-bottom: 8px;
+    }
+
+    .card-value {
+      font-family: 'Syne', sans-serif;
+      font-size: 28px;
+      font-weight: 700;
+      line-height: 1;
+      color: #fff;
+    }
+
+    .card-sub {
+      font-size: 10px;
+      color: var(--dim);
+      margin-top: 6px;
+    }
+
+    /* ── Section title ── */
+    .section-title {
+      font-size: 10px;
+      text-transform: uppercase;
+      letter-spacing: 2px;
+      color: var(--dim);
+      margin-bottom: 12px;
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+
+    .section-title::after {
+      content: '';
+      flex: 1;
+      height: 1px;
+      background: var(--border);
+    }
+
+    /* ── Storage metrics grid ── */
+    .metrics-grid {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: 6px;
+      padding: 20px;
+      margin-bottom: 20px;
+      display: grid;
+      grid-template-columns: repeat(4, 1fr);
+      gap: 20px;
+    }
+
+    .metric-item { }
+
+    .metric-label {
+      font-size: 10px;
+      color: var(--dim);
+      text-transform: uppercase;
+      letter-spacing: 1px;
+      margin-bottom: 4px;
+    }
+
+    .metric-value {
+      font-size: 18px;
+      font-weight: 500;
+      color: var(--text);
+    }
+
+    .metric-value.highlight { color: var(--amber); }
+
+    /* ── Charts ── */
+    .charts-row {
+      display: grid;
+      gap: 12px;
+      margin-bottom: 20px;
+    }
+
+    .charts-row.two   { grid-template-columns: 1fr 1fr; }
+    .charts-row.four  { grid-template-columns: 1fr 1fr 1fr 1fr; }
+
+    .chart-panel {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: 6px;
+      padding: 18px;
+    }
+
+    .chart-title {
+      font-size: 10px;
+      text-transform: uppercase;
+      letter-spacing: 1.5px;
+      color: var(--dim);
+      margin-bottom: 14px;
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+    }
+
+    .chart-current {
+      font-size: 16px;
+      font-weight: 500;
+      color: var(--text);
+      font-family: 'Syne', sans-serif;
+    }
+
+    .chart-wrap { position: relative; height: 140px; }
+
+    /* ── Bloom / Compaction row ── */
+    .stat-row {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 12px;
+      margin-bottom: 20px;
+    }
+
+    .stat-panel {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: 6px;
+      padding: 18px;
+    }
+
+    .stat-panel-title {
+      font-size: 10px;
+      text-transform: uppercase;
+      letter-spacing: 1.5px;
+      color: var(--dim);
+      margin-bottom: 14px;
+    }
+
+    .stat-panel-grid {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 14px;
+    }
+
+    /* ── Progress bar ── */
+    .bar-wrap { margin-top: 6px; }
+
+    .bar-track {
+      height: 3px;
+      background: var(--border);
+      border-radius: 2px;
+      overflow: hidden;
+    }
+
+    .bar-fill {
+      height: 100%;
+      border-radius: 2px;
+      transition: width 0.4s ease;
+    }
+
+    .bar-fill.amber { background: var(--amber); }
+    .bar-fill.green { background: var(--green); }
+    .bar-fill.blue  { background: var(--blue);  }
+    .bar-fill.red   { background: var(--red);   }
+
+    /* ── Footer ── */
+    footer {
+      border-top: 1px solid var(--border);
+      padding-top: 14px;
+      display: flex;
+      justify-content: space-between;
+      font-size: 10px;
+      color: var(--muted);
+    }
+
+    #last-updated { color: var(--dim); }
+
+    /* ── Connection error overlay ── */
+    #error-banner {
+      display: none;
+      background: rgba(248, 113, 113, 0.08);
+      border: 1px solid var(--red-dim);
+      border-radius: 6px;
+      padding: 12px 16px;
+      color: var(--red);
+      font-size: 11px;
+      margin-bottom: 16px;
+    }
+  </style>
 </head>
-<body class="bg-gray-50 p-8">
-    <div class="max-w-7xl mx-auto">
-        <!-- Header -->
-        <div class="mb-8">
-            <h1 class="text-4xl font-bold mb-2">🏙️ CityHall Dashboard</h1>
-            <p class="text-gray-600">Real-time Storage Engine Monitoring</p>
-        </div>
+<body>
+<div class="wrap">
 
-        <!-- Top Stats Cards -->
-        <div class="grid grid-cols-4 gap-4 mb-8">
-            <div class="bg-white p-6 rounded-lg shadow">
-                <div class="text-sm text-gray-500">Total Writes</div>
-                <div id="totalWrites" class="text-3xl font-bold text-blue-600">-</div>
-            </div>
-            <div class="bg-white p-6 rounded-lg shadow">
-                <div class="text-sm text-gray-500">Total Reads</div>
-                <div id="totalReads" class="text-3xl font-bold text-green-600">-</div>
-            </div>
-            <div class="bg-white p-6 rounded-lg shadow">
-                <div class="text-sm text-gray-500">Read Hit Rate</div>
-                <div id="readHitRate" class="text-3xl font-bold text-purple-600">-</div>
-            </div>
-            <div class="bg-white p-6 rounded-lg shadow">
-                <div class="text-sm text-gray-500">Uptime</div>
-                <div id="uptime" class="text-3xl font-bold">-</div>
-            </div>
-        </div>
-
-        <!-- Storage Engine Stats -->
-        <div class="bg-white p-6 rounded-lg shadow mb-8">
-            <h3 class="text-lg font-semibold mb-4">📊 Storage Engine Metrics</h3>
-            <div class="grid grid-cols-4 gap-4">
-                <div>
-                    <div class="text-sm text-gray-500">MemTable Size</div>
-                    <div id="memtableSize" class="text-2xl font-bold">-</div>
-                </div>
-                <div>
-                    <div class="text-sm text-gray-500">MemTable Entries</div>
-                    <div id="memtableEntries" class="text-2xl font-bold">-</div>
-                </div>
-                <div>
-                    <div class="text-sm text-gray-500">SSTable Count</div>
-                    <div id="sstableCount" class="text-2xl font-bold">-</div>
-                </div>
-                <div>
-                    <div class="text-sm text-gray-500">Disk Usage</div>
-                    <div id="diskUsage" class="text-2xl font-bold">-</div>
-                </div>
-                <div>
-                    <div class="text-sm text-gray-500">Flushes</div>
-                    <div id="flushesTotal" class="text-2xl font-bold">-</div>
-                </div>
-                <div>
-                    <div class="text-sm text-gray-500">Compactions</div>
-                    <div id="compactionsTotal" class="text-2xl font-bold">-</div>
-                </div>
-                <div>
-                    <div class="text-sm text-gray-500">Write Amplification</div>
-                    <div id="writeAmplification" class="text-2xl font-bold">-</div>
-                </div>
-                <div>
-                    <div class="text-sm text-gray-500">Bloom FP Rate</div>
-                    <div id="bloomFpRate" class="text-2xl font-bold">-</div>
-                </div>
-            </div>
-        </div>
-
-        <!-- Charts Row 1: Latency -->
-        <div class="grid grid-cols-2 gap-6 mb-8">
-            <div class="bg-white p-6 rounded-lg shadow">
-                <h3 class="text-lg font-semibold mb-4">Write Latency (μs)</h3>
-                <canvas id="writeLatencyChart"></canvas>
-            </div>
-            <div class="bg-white p-6 rounded-lg shadow">
-                <h3 class="text-lg font-semibold mb-4">Read Latency (μs)</h3>
-                <canvas id="readLatencyChart"></canvas>
-            </div>
-        </div>
+  <!-- Header -->
+  <header>
+    <div class="logo">City<span>Hall</span></div>
+    <div class="status-bar">
+      <div id="conn-dot" class="dot"></div>
+      <span id="node-display">—</span>
+      <span>uptime <span id="uptime-display">—</span></span>
+      <span id="last-updated">—</span>
     </div>
+  </header>
 
-    <script>
-        // Chart setup
-        const writeLatencyChart = new Chart(document.getElementById('writeLatencyChart'), {
-            type: 'bar',
-            data: {
-                labels: ['p50', 'p99'],
-                datasets: [{
-                    label: 'Latency (μs)',
-                    data: [0, 0],
-                    backgroundColor: ['rgba(59, 130, 246, 0.5)', 'rgba(239, 68, 68, 0.5)'],
-                }]
-            },
-            options: {
-                responsive: true,
-                scales: { y: { beginAtZero: true } }
-            }
-        });
+  <!-- Error banner -->
+  <div id="error-banner">⚠ Cannot reach /api/metrics — is the server running?</div>
 
-        const readLatencyChart = new Chart(document.getElementById('readLatencyChart'), {
-            type: 'bar',
-            data: {
-                labels: ['p50', 'p99'],
-                datasets: [{
-                    label: 'Latency (μs)',
-                    data: [0, 0],
-                    backgroundColor: ['rgba(16, 185, 129, 0.5)', 'rgba(245, 158, 11, 0.5)'],
-                }]
-            },
-            options: {
-                responsive: true,
-                scales: { y: { beginAtZero: true } }
-            }
-        });
+  <!-- Top stat cards -->
+  <div class="cards">
+    <div class="card amber">
+      <div class="card-label">Total Writes</div>
+      <div id="totalWrites" class="card-value">—</div>
+      <div id="writesRate" class="card-sub">— ops/sec</div>
+    </div>
+    <div class="card green">
+      <div class="card-label">Total Reads</div>
+      <div id="totalReads" class="card-value">—</div>
+      <div id="readsRate" class="card-sub">— ops/sec</div>
+    </div>
+    <div class="card blue">
+      <div class="card-label">Read Hit Rate</div>
+      <div id="readHitRate" class="card-value">—</div>
+      <div class="card-sub">memtable + sstable hits</div>
+    </div>
+    <div class="card red">
+      <div class="card-label">Write p99 Latency</div>
+      <div id="writeP99" class="card-value">—</div>
+      <div class="card-sub">microseconds</div>
+    </div>
+  </div>
 
-        async function updateDashboard() {
-            try {
-                const res = await fetch('/api/metrics');
-                const data = await res.json();
+  <!-- Storage metrics grid -->
+  <div class="section-title">Storage State</div>
+  <div class="metrics-grid">
+    <div class="metric-item">
+      <div class="metric-label">MemTable Size</div>
+      <div id="memtableSize" class="metric-value highlight">—</div>
+    </div>
+    <div class="metric-item">
+      <div class="metric-label">MemTable Entries</div>
+      <div id="memtableEntries" class="metric-value">—</div>
+    </div>
+    <div class="metric-item">
+      <div class="metric-label">SSTable Count</div>
+      <div id="sstableCount" class="metric-value">—</div>
+    </div>
+    <div class="metric-item">
+      <div class="metric-label">Disk Usage</div>
+      <div id="diskUsage" class="metric-value">—</div>
+    </div>
+    <div class="metric-item">
+      <div class="metric-label">WAL Size</div>
+      <div id="walSize" class="metric-value">—</div>
+    </div>
+    <div class="metric-item">
+      <div class="metric-label">Flushes</div>
+      <div id="flushesTotal" class="metric-value">—</div>
+    </div>
+    <div class="metric-item">
+      <div class="metric-label">Compactions</div>
+      <div id="compactionsTotal" class="metric-value">—</div>
+    </div>
+    <div class="metric-item">
+      <div class="metric-label">Write Amplification</div>
+      <div id="writeAmplification" class="metric-value">—</div>
+    </div>
+  </div>
 
-                // Update top cards
-                document.getElementById('totalWrites').textContent = data.storage_metrics.writes_total.toLocaleString();
-                document.getElementById('totalReads').textContent = data.storage_metrics.reads_total.toLocaleString();
-                document.getElementById('readHitRate').textContent = (data.storage_metrics.read_hit_rate * 100).toFixed(1) + '%';
-                document.getElementById('uptime').textContent = formatUptime(data.uptime_seconds);
+  <!-- Time-series charts row 1: throughput -->
+  <div class="section-title">Throughput — 60s window</div>
+  <div class="charts-row two">
+    <div class="chart-panel">
+      <div class="chart-title">
+        Write Throughput (ops/sec)
+        <span id="writeThroughputCurrent" class="chart-current">—</span>
+      </div>
+      <div class="chart-wrap"><canvas id="writeThroughputChart"></canvas></div>
+    </div>
+    <div class="chart-panel">
+      <div class="chart-title">
+        Read Throughput (ops/sec)
+        <span id="readThroughputCurrent" class="chart-current">—</span>
+      </div>
+      <div class="chart-wrap"><canvas id="readThroughputChart"></canvas></div>
+    </div>
+  </div>
 
-                // Update storage metrics
-                document.getElementById('memtableSize').textContent = data.storage_metrics.memtable_size_mb.toFixed(2) + ' MB';
-                document.getElementById('memtableEntries').textContent = data.storage_metrics.memtable_entries.toLocaleString();
-                document.getElementById('sstableCount').textContent = data.storage_metrics.sstable_count;
-                document.getElementById('diskUsage').textContent = data.storage_metrics.disk_usage_mb.toFixed(2) + ' MB';
-                document.getElementById('flushesTotal').textContent = data.storage_metrics.flushes_total;
-                document.getElementById('compactionsTotal').textContent = data.storage_metrics.compactions_total;
-                document.getElementById('writeAmplification').textContent = data.storage_metrics.write_amplification.toFixed(2) + 'x';
-                document.getElementById('bloomFpRate').textContent = (data.storage_metrics.bloom_filter_fp_rate * 100).toFixed(2) + '%';
+  <!-- Time-series charts row 2: latency -->
+  <div class="section-title">Latency — 60s window</div>
+  <div class="charts-row two">
+    <div class="chart-panel">
+      <div class="chart-title">
+        Write Latency p99 (μs)
+        <span id="writeLatencyCurrent" class="chart-current">—</span>
+      </div>
+      <div class="chart-wrap"><canvas id="writeLatencyChart"></canvas></div>
+    </div>
+    <div class="chart-panel">
+      <div class="chart-title">
+        Read Latency p99 (μs)
+        <span id="readLatencyCurrent" class="chart-current">—</span>
+      </div>
+      <div class="chart-wrap"><canvas id="readLatencyChart"></canvas></div>
+    </div>
+  </div>
 
-                // Update latency charts
-                writeLatencyChart.data.datasets[0].data = [
-                    data.storage_metrics.write_latency_p50_us,
-                    data.storage_metrics.write_latency_p99_us
-                ];
-                writeLatencyChart.update();
+  <!-- Time-series charts row 3: storage -->
+  <div class="section-title">Storage — 60s window</div>
+  <div class="charts-row two">
+    <div class="chart-panel">
+      <div class="chart-title">
+        MemTable Size (MB)
+        <span id="memtableCurrent" class="chart-current">—</span>
+      </div>
+      <div class="chart-wrap"><canvas id="memtableChart"></canvas></div>
+    </div>
+    <div class="chart-panel">
+      <div class="chart-title">
+        SSTable Count
+        <span id="sstableCurrent" class="chart-current">—</span>
+      </div>
+      <div class="chart-wrap"><canvas id="sstableChart"></canvas></div>
+    </div>
+  </div>
 
-                readLatencyChart.data.datasets[0].data = [
-                    data.storage_metrics.read_latency_p50_us,
-                    data.storage_metrics.read_latency_p99_us
-                ];
-                readLatencyChart.update();
+  <!-- Bloom filter + Compaction -->
+  <div class="section-title">Internals</div>
+  <div class="stat-row">
+    <div class="stat-panel">
+      <div class="stat-panel-title">Bloom Filter</div>
+      <div class="stat-panel-grid">
+        <div>
+          <div class="metric-label">Hit Rate</div>
+          <div id="bloomHitRate" class="metric-value" style="color:var(--green)">—</div>
+          <div class="bar-wrap"><div class="bar-track"><div id="bloomHitBar" class="bar-fill green" style="width:0%"></div></div></div>
+        </div>
+        <div>
+          <div class="metric-label">False Positive Rate</div>
+          <div id="bloomFpRate" class="metric-value" style="color:var(--red)">—</div>
+          <div class="bar-wrap"><div class="bar-track"><div id="bloomFpBar" class="bar-fill red" style="width:0%"></div></div></div>
+        </div>
+      </div>
+    </div>
+    <div class="stat-panel">
+      <div class="stat-panel-title">Compaction</div>
+      <div class="stat-panel-grid">
+        <div>
+          <div class="metric-label">Space Saved</div>
+          <div id="compactionSavings" class="metric-value" style="color:var(--blue)">—</div>
+          <div class="bar-wrap"><div class="bar-track"><div id="compactionBar" class="bar-fill blue" style="width:0%"></div></div></div>
+        </div>
+        <div>
+          <div class="metric-label">Write Amplification</div>
+          <div id="writeAmp" class="metric-value" style="color:var(--amber)">—</div>
+        </div>
+      </div>
+    </div>
+  </div>
 
-            } catch (e) {
-                console.error('Failed to fetch metrics:', e);
-            }
+  <!-- Footer -->
+  <footer>
+    <span>CityHall Storage Engine · LSM-Tree</span>
+    <span id="last-updated-footer">last updated —</span>
+  </footer>
+
+</div>
+
+<script>
+// ── Config ──────────────────────────────────────────────────────────────────
+const POLL_MS     = 1000;
+const WINDOW_SIZE = 60;   // seconds of history to show
+
+// ── State ────────────────────────────────────────────────────────────────────
+const history = {
+  labels:          [],
+  writeThroughput: [],
+  readThroughput:  [],
+  writeLatencyP99: [],
+  readLatencyP99:  [],
+  memtableMB:      [],
+  sstableCount:    [],
+};
+
+let prevWrites = null;
+let prevReads  = null;
+
+// ── Chart defaults ───────────────────────────────────────────────────────────
+Chart.defaults.color          = '#6b7280';
+Chart.defaults.borderColor    = '#1e2229';
+Chart.defaults.font.family    = "'JetBrains Mono', monospace";
+Chart.defaults.font.size      = 10;
+
+function makeLineChart(id, color, unit) {
+  return new Chart(document.getElementById(id), {
+    type: 'line',
+    data: {
+      labels: [],
+      datasets: [{
+        data: [],
+        borderColor: color,
+        backgroundColor: color + '18',
+        borderWidth: 1.5,
+        pointRadius: 0,
+        pointHoverRadius: 3,
+        fill: true,
+        tension: 0.3,
+      }]
+    },
+    options: {
+      responsive: true,
+      maintainAspectRatio: false,
+      animation: { duration: 200 },
+      interaction: { intersect: false, mode: 'index' },
+      plugins: {
+        legend: { display: false },
+        tooltip: {
+          backgroundColor: '#13161b',
+          borderColor: '#1e2229',
+          borderWidth: 1,
+          titleColor: '#6b7280',
+          bodyColor: '#c8cdd6',
+          callbacks: {
+            label: ctx => ` ${ctx.parsed.y.toFixed(1)} ${unit}`
+          }
         }
-
-        function formatUptime(seconds) {
-            const h = Math.floor(seconds / 3600);
-            const m = Math.floor((seconds % 3600) / 60);
-            return `${h}h ${m}m`;
+      },
+      scales: {
+        x: {
+          grid:   { color: '#1e2229', drawBorder: false },
+          ticks:  { color: '#3a3f4a', maxTicksLimit: 6, maxRotation: 0 },
+        },
+        y: {
+          grid:   { color: '#1e2229', drawBorder: false },
+          ticks:  { color: '#3a3f4a', maxTicksLimit: 4 },
+          beginAtZero: true,
         }
+      }
+    }
+  });
+}
 
-        function formatBytes(bytes) {
-            if (bytes < 1024) return bytes + ' B';
-            if (bytes < 1048576) return (bytes / 1024).toFixed(1) + ' KB';
-            return (bytes / 1048576).toFixed(1) + ' MB';
-        }
+const charts = {
+  writeThroughput: makeLineChart('writeThroughputChart', '#f59e0b', 'ops/s'),
+  readThroughput:  makeLineChart('readThroughputChart',  '#22c55e', 'ops/s'),
+  writeLatency:    makeLineChart('writeLatencyChart',    '#f87171', 'μs'),
+  readLatency:     makeLineChart('readLatencyChart',     '#38bdf8', 'μs'),
+  memtable:        makeLineChart('memtableChart',        '#f59e0b', 'MB'),
+  sstable:         makeLineChart('sstableChart',         '#a78bfa', 'tables'),
+};
 
-        // Auto-refresh every second
-        setInterval(updateDashboard, 1000);
-        updateDashboard();
-    </script>
+// ── Helpers ──────────────────────────────────────────────────────────────────
+function push(arr, val) {
+  arr.push(val);
+  if (arr.length > WINDOW_SIZE) arr.shift();
+}
+
+function fmt(n, decimals = 0) {
+  if (n === null || n === undefined) return '—';
+  return n.toLocaleString('en-US', { maximumFractionDigits: decimals });
+}
+
+function updateChart(chart, labels, data) {
+  chart.data.labels         = [...labels];
+  chart.data.datasets[0].data = [...data];
+  chart.update('none');
+}
+
+function formatUptime(s) {
+  const h = Math.floor(s / 3600);
+  const m = Math.floor((s % 3600) / 60);
+  const sec = s % 60;
+  return `${h}h ${String(m).padStart(2,'0')}m ${String(sec).padStart(2,'0')}s`;
+}
+
+function timeLabel() {
+  const d = new Date();
+  return `${String(d.getMinutes()).padStart(2,'0')}:${String(d.getSeconds()).padStart(2,'0')}`;
+}
+
+// ── Poll ─────────────────────────────────────────────────────────────────────
+async function poll() {
+  try {
+    const res  = await fetch('/api/metrics');
+    const data = await res.json();
+    const s    = data.storage_metrics;
+
+    // Connection status
+    document.getElementById('conn-dot').className = 'dot';
+    document.getElementById('error-banner').style.display = 'none';
+
+    // Header
+    document.getElementById('node-display').textContent    = data.node_id || '—';
+    document.getElementById('uptime-display').textContent  = formatUptime(data.uptime_seconds || 0);
+    const now = new Date();
+    document.getElementById('last-updated').textContent         = `updated ${now.toLocaleTimeString()}`;
+    document.getElementById('last-updated-footer').textContent  = `last updated ${now.toLocaleTimeString()}`;
+
+    // Throughput deltas
+    const writeThroughput = prevWrites !== null ? Math.max(0, s.writes_total - prevWrites) : 0;
+    const readThroughput  = prevReads  !== null ? Math.max(0, s.reads_total  - prevReads)  : 0;
+    prevWrites = s.writes_total;
+    prevReads  = s.reads_total;
+
+    // Stat cards
+    document.getElementById('totalWrites').textContent  = fmt(s.writes_total);
+    document.getElementById('writesRate').textContent   = `${fmt(writeThroughput)} ops/sec`;
+    document.getElementById('totalReads').textContent   = fmt(s.reads_total);
+    document.getElementById('readsRate').textContent    = `${fmt(readThroughput)} ops/sec`;
+    document.getElementById('readHitRate').textContent  = (s.read_hit_rate * 100).toFixed(1) + '%';
+    document.getElementById('writeP99').textContent     = fmt(s.write_latency_p99_us, 0) + 'μs';
+
+    // Storage metrics grid
+    document.getElementById('memtableSize').textContent      = s.memtable_size_mb.toFixed(2) + ' MB';
+    document.getElementById('memtableEntries').textContent   = fmt(s.memtable_entries);
+    document.getElementById('sstableCount').textContent      = fmt(s.sstable_count);
+    document.getElementById('diskUsage').textContent         = s.disk_usage_mb.toFixed(2) + ' MB';
+    document.getElementById('walSize').textContent           = s.wal_size_mb.toFixed(2) + ' MB';
+    document.getElementById('flushesTotal').textContent      = fmt(s.flushes_total);
+    document.getElementById('compactionsTotal').textContent  = fmt(s.compactions_total);
+    document.getElementById('writeAmplification').textContent = s.write_amplification.toFixed(2) + 'x';
+
+    // Bloom filter + compaction
+    const bloomHit = (s.bloom_filter_hit_rate * 100);
+    const bloomFp  = (s.bloom_filter_fp_rate  * 100);
+    const savings  = (s.compaction_space_savings * 100);
+
+    document.getElementById('bloomHitRate').textContent      = bloomHit.toFixed(2) + '%';
+    document.getElementById('bloomFpRate').textContent       = bloomFp.toFixed(3) + '%';
+    document.getElementById('compactionSavings').textContent = savings.toFixed(1) + '%';
+    document.getElementById('writeAmp').textContent          = s.write_amplification.toFixed(2) + 'x';
+
+    document.getElementById('bloomHitBar').style.width      = Math.min(bloomHit, 100) + '%';
+    document.getElementById('bloomFpBar').style.width       = Math.min(bloomFp * 20, 100) + '%';
+    document.getElementById('compactionBar').style.width    = Math.min(savings, 100) + '%';
+
+    // Push to history
+    const label = timeLabel();
+    push(history.labels,          label);
+    push(history.writeThroughput, writeThroughput);
+    push(history.readThroughput,  readThroughput);
+    push(history.writeLatencyP99, s.write_latency_p99_us);
+    push(history.readLatencyP99,  s.read_latency_p99_us);
+    push(history.memtableMB,      s.memtable_size_mb);
+    push(history.sstableCount,    s.sstable_count);
+
+    // Update chart current values
+    document.getElementById('writeThroughputCurrent').textContent = fmt(writeThroughput) + ' ops/s';
+    document.getElementById('readThroughputCurrent').textContent  = fmt(readThroughput)  + ' ops/s';
+    document.getElementById('writeLatencyCurrent').textContent    = fmt(s.write_latency_p99_us, 0) + ' μs';
+    document.getElementById('readLatencyCurrent').textContent     = fmt(s.read_latency_p99_us, 0)  + ' μs';
+    document.getElementById('memtableCurrent').textContent        = s.memtable_size_mb.toFixed(2) + ' MB';
+    document.getElementById('sstableCurrent').textContent         = fmt(s.sstable_count);
+
+    // Render charts
+    updateChart(charts.writeThroughput, history.labels, history.writeThroughput);
+    updateChart(charts.readThroughput,  history.labels, history.readThroughput);
+    updateChart(charts.writeLatency,    history.labels, history.writeLatencyP99);
+    updateChart(charts.readLatency,     history.labels, history.readLatencyP99);
+    updateChart(charts.memtable,        history.labels, history.memtableMB);
+    updateChart(charts.sstable,         history.labels, history.sstableCount);
+
+  } catch (e) {
+    document.getElementById('conn-dot').className       = 'dot error';
+    document.getElementById('error-banner').style.display = 'block';
+    console.error('metrics fetch failed:', e);
+  }
+}
+
+// ── Start ─────────────────────────────────────────────────────────────────────
+poll();
+setInterval(poll, POLL_MS);
+</script>
 </body>
 </html>
