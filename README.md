@@ -1,162 +1,187 @@
 # CityHall 🏙️
 
----
+A time-series storage engine built from scratch in Rust, using an LSM-tree architecture.
+Built to understand the internals of databases like RocksDB, Cassandra, and InfluxDB.
 
-## CityHall: Key Features
-
-CityHall is a robust, crash-resilient time-series database designed for efficient data storage and retrieval.
-
-### Core Features
-
-**Crash-Resilient Durability**: Zero data loss on power failure with atomic state persistence.  
-**High Throughput**: Optimized for high-volume data ingestion and retrieval.  
-**Efficient Storage**: Utilizes advanced techniques for compact data storage.  
-
----
-
-## Testing & Validation
-
-### Integration Tests (All Passing)
-
-```bash
-# Run all tests
-cargo test
-```
-
-**Zero compiler warnings. All tests pass.**
-
----
-
-## Documentation
-
-- **[BENCHMARKS.md](BENCHMARKS.md)** - Performance analysis with real measurements
-- **[ARCHITECTURE.md](ARCHITECTURE.md)** - Storage engine internals
-
----
-
----
-
-# The Storage Engine: CityHall Core
-
-> **Note**: The following section describes the underlying storage engine that CityHall is built on top of. 
-
----
-
-## About
-
-**CityHall is the administrative core for your personal machine.** 
-
-The engine is built on a **Log-Structured Merge-Tree (LSM-Tree)**.
-
-## Core Storage Engine Features
-
--   **Persistent Daemon & Client-Server Architecture**: CityHall runs as a long-lived background service, managed by `systemd`, with a separate client application for interaction.
--   **Blazing Fast Writes**: A batched, checksummed Write-Ahead Log (WAL) ensures durability while an in-memory `BTreeMap`-based MemTable ingests writes at high speed.
--   **Non-Blocking Operations**: A dual-MemTable architecture with a background thread for flushing to disk ensures that writes remain fast and responsive, avoiding latency spikes.
--   **Optimized Read Path**: Data is persisted to immutable, compressed SSTables (Sorted String Tables). Queries for non-existent keys are rejected in microseconds thanks to custom-built Bloom Filters. Reads prioritize newest data by iterating SSTables from most recent to oldest.
--   **Automatic Housekeeping**: A background compaction process merges SSTables using a k-way merge algorithm, reclaiming space and improving read efficiency.
--   **Comprehensive Internal Metrics**: An integrated metrics system tracks key operational data, performance, and system state for observability (e.g., read/write counts, latencies, disk usage).
--   **Robust Command-Line Interface**: A versatile CLI (`cityhall`) acts as a client to the running daemon, enabling `put`, `get` commands and future expansion.
-
-## Storage Engine Performance
-
-| Feature               | Metric                | Result                                       |
-| --------------------- | --------------------- | -------------------------------------------- |
-| **Bloom Filters**     | Read Latency (Miss)   | **442x Speedup** (1,209μs → 2.74μs)            |
-| **Background Flush**  | Write Latency (p99)   | **93% Improvement** (100ms → 7ms)              |
-| **Compaction**        | Space Savings         | **Up to 97.4%**                              |
-| **WAL Batching**      | Write Throughput      | **~184,000 writes/sec**                      |
-| **Data Compression**  | Compression Ratio     | **~10:1** (Snappy + Prefix Compression)      |
-
-## Architecture Overview
-
-CityHall follows a classic LSM-Tree design to prioritize write performance without sacrificing read efficiency.
-
-For a detailed technical explanation of the components, data flow, and design trade-offs, please see the **[Architecture Deep Dive](ARCHITECTURE.md)**.
-
-### Write Path
-```
-Client CLI → Daemon (TCP) → WAL (Batched) → Active MemTable (In-Memory BTreeMap)
-                                              ↓ (Threshold reached, e.g., 64MB)
-                                           Immutable MemTable (Frozen)
-                                              ↓ (Handed to Background Thread)
-                                           SSTable on Disk (Compressed, with Bloom Filter)
-```
-
-### Read Path
-```
-Client CLI → Daemon (TCP) → Active MemTable → Immutable MemTable → SSTables (Newest to Oldest)
-                                                                       ↳ Bloom Filter check (to skip I/O)
-```
-
-## Storage Engine Setup (systemd Daemon)
-
-### Building
-The project is built with the standard Rust toolchain.
-```bash
-# Build the binary in release mode
-cargo build --release
-```
-The CLI binary will be available at `./target/release/cityhall`.
-
-### Running as a Daemon (systemd)
-To run CityHall as a persistent background service on Linux:
-
-1.  **Edit `cityhall.service`**: Copy `cityhall.service` from the project root to `/etc/systemd/system/` and edit the `User=` and `ExecStart=` paths to match your system.
-```bash
-    sudo cp cityhall.service /etc/systemd/system/
-    sudo nano /etc/systemd/system/cityhall.service
-    # Replace <YOUR_USERNAME> with your actual username
-    # Replace /path/to/your/cityhall/target/release/cityhall with the absolute path
-```
-2.  **Reload, Enable, and Start**:
-```bash
-    sudo systemctl daemon-reload
-    sudo systemctl enable cityhall.service
-    sudo systemctl start cityhall.service
-```
-3.  **Verify Status**:
-```bash
-    systemctl status cityhall.service
-```
-    You should see `Active: active (running)`.
-
-### Using the CLI Client
-The `cityhall` CLI is the primary way to interact with the running daemon. By default, it stores data in `~/.cityhall/data` and connects to `127.0.0.1:7878`.
-```bash
-# Put a key-value pair
-./target/release/cityhall client put system.cpu.load "0.75"
-
-# Get a value by its key
-./target/release/cityhall client get system.cpu.load
-# Output: VALUE 0.75
-
-# Get a key that doesn't exist
-./target/release/cityhall client get non.existent.key
-# Output: NOT_FOUND
-```
-
-## Storage Engine Roadmap
-
-CityHall is an active portfolio project. Future areas of focus include:
-
--   [ ] **Delete Support**: Implementing a robust mechanism for key deletions using tombstones, handled correctly throughout the WAL, MemTables, and compaction.
--   [ ] **System Monitoring Agent**: Building a separate tool to automatically feed system performance metrics into CityHall itself.
--   [ ] **Block Cache**: Introducing an in-memory LRU cache for SSTable data blocks to reduce disk I/O for hot data.
--   [ ] **Leveled Compaction**: Migrating from size-tiered to a more optimal leveled compaction strategy for better read performance.
--   [ ] **Network API**: Expanding the current simple TCP protocol to a more robust API (e.g., gRPC, HTTP) for broader application integration.
-
-
-## License
-This project is licensed under the MIT License.
-
----
-
-<div align="center">
-
-
-[![Benchmarks](https://img.shields.io/badge/benchmarks-measured-blue)](BENCHMARKS.md)
 [![Language](https://img.shields.io/badge/language-Rust-orange.svg)](https://www.rust-lang.org/)
+[![Tests](https://img.shields.io/badge/tests-passing-brightgreen)](https://github.com/ddhadho/cityhall)
+[![Warnings](https://img.shields.io/badge/warnings-0-brightgreen)](https://github.com/ddhadho/cityhall)
 [![License](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 
-</div>
+---
+
+## Performance
+
+| Optimisation | Metric | Result |
+|---|---|---|
+| **Bloom Filters** | Read latency (missing key) | **442x faster** (1,209μs → 2.74μs) |
+| **Background Flush** | Write latency p99 | **93% lower** (100ms → 7ms) |
+| **Compaction** | Space savings | **97.4%** |
+| **WAL Batching** | Write throughput | **184,000 writes/sec** |
+| **Prefix + Snappy** | Compression ratio | **~10:1** |
+
+See [BENCHMARKS.md](BENCHMARKS.md) for methodology and raw results.
+
+---
+
+## Dashboard
+
+CityHall ships with a live observability dashboard — time-series charts for throughput,
+latency percentiles, MemTable size, SSTable count, and Bloom filter effectiveness.
+
+![CityHall Dashboard](docs/dashboard.png)
+
+A Prometheus-compatible `/metrics` scrape endpoint is also available on the same port:
+
+```bash
+curl http://localhost:8080/metrics
+```
+
+---
+
+## Architecture
+
+CityHall follows a classic LSM-tree design — optimise for write throughput, pay for it
+on reads, then use Bloom filters and compaction to make reads fast again.
+
+```
+Write path:
+  Client CLI → TCP daemon → WAL (batched, checksummed)
+                          → Active MemTable (BTreeMap)
+                          → [threshold] Immutable MemTable
+                          → [background thread] SSTable (compressed, Bloom filter)
+
+Read path:
+  Client CLI → TCP daemon → Active MemTable
+                          → Immutable MemTable
+                          → SSTables newest→oldest
+                              └─ Bloom filter check (skips disk I/O on miss)
+```
+
+For a full breakdown of every component, data flow, and design trade-offs:
+**[Architecture Deep Dive →](ARCHITECTURE.md)**
+
+---
+
+## Features
+
+**Durable writes** — every entry passes through a checksummed, batched WAL before
+touching the MemTable. Crash recovery replays the WAL to rebuild in-memory state exactly.
+
+**Non-blocking flush** — dual-MemTable architecture. When the active MemTable fills,
+it is frozen and handed to a background thread. A fresh MemTable immediately accepts
+writes, eliminating the p99 flush stall.
+
+**Bloom filters** — custom implementation per SSTable. 1% false positive rate at 12KB
+per filter. Missing key lookups skip all disk I/O.
+
+**Size-tiered compaction** — k-way merge reclaims space and deduplicates keys across
+SSTables. 97.4% space savings on write-heavy workloads with key overlap.
+
+**Prefix compression + Snappy** — keys sharing a common prefix are delta-encoded within
+each 16KB block before Snappy compression. ~10:1 compression ratio on sensor key patterns.
+
+**Internal metrics** — atomic counters and reservoir-sampled histograms track writes,
+reads, latency percentiles, flush/compaction events, Bloom filter effectiveness, and
+disk usage. Exposed as JSON (`/api/metrics`) and Prometheus text (`/metrics`).
+
+**systemd integration** — runs as a persistent background daemon with watchdog support.
+
+---
+
+## Getting Started
+
+**Prerequisites**: Rust toolchain ([rustup.rs](https://rustup.rs))
+
+```bash
+git clone https://github.com/ddhadho/cityhall.git
+cd cityhall
+cargo build --release
+```
+
+Start the server:
+
+```bash
+./target/release/cityhall server
+# ✓ WAL initialized
+# ✓ StorageEngine initialized
+# ✓ Dashboard started at http://localhost:8080/dashboard
+# ✓ TCP server listening on 0.0.0.0:7878
+```
+
+Open **http://localhost:8080/dashboard** for the live metrics dashboard.
+
+Write and read data:
+
+```bash
+./target/release/cityhall client put system.cpu.load "0.75"
+# OK
+
+./target/release/cityhall client get system.cpu.load
+# VALUE 0.75
+
+./target/release/cityhall client get does.not.exist
+# NOT_FOUND
+```
+
+Check live metrics from the terminal:
+
+```bash
+./target/release/cityhall client metrics
+# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+# 🏙️  CityHall Metrics  —  hostname
+# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+# 📊 Operations
+#    Writes:             1,000
+#    Reads:                200  (hits: 200, misses: 0)
+# ⚡ Latency
+#    Write  p99:        818.0 us
+#    Read   p99:        234.0 us
+# ...
+```
+
+Scrape Prometheus metrics:
+
+```bash
+curl http://localhost:8080/metrics
+```
+
+> For running CityHall as a persistent systemd daemon, see [the systemd setup guide](cityhall.service).
+
+---
+
+## Tests
+
+```bash
+cargo test           # all tests
+cargo test --release # with optimisations (accurate benchmark numbers)
+```
+
+Zero compiler warnings. All tests pass.
+
+---
+
+## Roadmap
+
+- [ ] **Delete / tombstones** — correct deletion through WAL, MemTable, and compaction
+- [ ] **Block cache** — LRU cache for decompressed SSTable blocks
+- [ ] **Leveled compaction** — better read amplification for large datasets
+- [x] **Metrics CLI command** — `cityhall client metrics` pretty-print
+- [x] **Prometheus endpoint** — `/metrics` scrape endpoint
+- [ ] **gRPC / HTTP API** — replace the current TCP protocol
+
+---
+
+## References
+
+- [The Log-Structured Merge-Tree](https://www.cs.umb.edu/~poneil/lsmtree.pdf) — O'Neil et al., 1996
+- [Bigtable](https://static.googleusercontent.com/media/research.google.com/en//archive/bigtable-osdi06.pdf) — Chang et al., 2006
+- [LevelDB](https://github.com/google/leveldb) — Google's reference implementation
+- *Designing Data-Intensive Applications* — Martin Kleppmann, Chapter 3
+- *Database Internals* — Alex Petrov, Chapters 1–7
+
+---
+
+## License
+
+MIT
