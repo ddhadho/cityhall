@@ -1,6 +1,6 @@
 # Architecture Deep Dive
 
-This document explains the technical design decisions, trade-offs, and implementation details of the time-series LSM storage engine. Written for technical interviews and code reviews.
+This document explains the technical design decisions, trade-offs, and implementation details of the time-series LSM storage engine.
 
 ## Table of Contents
 1. [System Overview](#system-overview)
@@ -487,11 +487,11 @@ if memtable.full() {
 ## Future Optimizations
 
 ### Completed (Week 1-2)
-- ✅ **Bloom Filters**: Custom implementation, 442x speedup on misses.
-- ✅ **Background Flush**: Dual MemTable, 93% p99 latency improvement.
-- ✅ **Size-Tiered Compaction**: k-way merge, 97% space savings.
-- ✅ **Comprehensive Metrics**: 16 key metrics for observability.
-- ✅ **Daemon & systemd**: Runs as a persistent background service.
+- **Bloom Filters**: Custom implementation, 442x speedup on misses.
+- **Background Flush**: Dual MemTable, 93% p99 latency improvement.
+- **Size-Tiered Compaction**: k-way merge, 97% space savings.
+- **Comprehensive Metrics**: 16 key metrics for observability.
+- **Daemon & systemd**: Runs as a persistent background service.
 
 ### High Priority (Next Steps)
 - [ ] **Delete Support**: Tombstones for key deletion and compaction cleanup.
@@ -521,4 +521,4 @@ if memtable.full() {
 
 ---
 
-*Last updated: Day 14 - Code cleanup, documentation, and daemonization*
+*Last updated: March 7, 2026 *
