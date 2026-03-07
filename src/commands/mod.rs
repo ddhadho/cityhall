@@ -15,21 +15,14 @@ pub async fn dispatch(command: Commands) -> Result<()> {
             data_dir,
             port,
             wal_buffer_size,
-            config: _,  // config file support is reserved for a future release
-        } => {
-            server::run_server(data_dir, port, wal_buffer_size).await
-        }
+            config: _, // config file support is reserved for a future release
+        } => server::run_server(data_dir, port, wal_buffer_size).await,
 
         Commands::Client { addr, command } => match command {
-            ClientCommand::Put { key, value } => {
-                client::put(&addr, key, value).await
-            }
-            ClientCommand::Get { key } => {
-                client::get(&addr, key).await
-            }
-            ClientCommand::Delete { key } => {
-                client::delete(&addr, key).await
-            }
+            ClientCommand::Put { key, value } => client::put(&addr, key, value).await,
+            ClientCommand::Get { key } => client::get(&addr, key).await,
+            ClientCommand::Delete { key } => client::delete(&addr, key).await,
+            ClientCommand::Metrics { dashboard_addr } => client::metrics(&dashboard_addr).await,
         },
     }
 }

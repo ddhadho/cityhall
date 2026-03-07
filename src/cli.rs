@@ -36,7 +36,7 @@ pub enum Commands {
         config: Option<PathBuf>,
     },
 
-    /// Client commands (get, put, delete)
+    /// Client commands (put, get, delete, metrics)
     Client {
         /// Server address (host:port)
         #[arg(long, short = 'a', default_value = "127.0.0.1:7878")]
@@ -70,6 +70,13 @@ pub enum ClientCommand {
         /// Key to delete
         key: String,
     },
+
+    /// Print live metrics from the running server
+    Metrics {
+        /// Dashboard HTTP address
+        #[arg(long, default_value = "http://127.0.0.1:8080")]
+        dashboard_addr: String,
+    },
 }
 
 /// Output format for status commands
@@ -99,11 +106,7 @@ mod tests {
         ]);
 
         match cli.command {
-            Commands::Server {
-                data_dir,
-                port,
-                ..
-            } => {
+            Commands::Server { data_dir, port, .. } => {
                 assert_eq!(data_dir, PathBuf::from("/data/server"));
                 assert_eq!(port, 8000);
             }
@@ -148,6 +151,21 @@ mod tests {
                     _ => panic!("Expected Get command"),
                 }
             }
+            _ => panic!("Expected Client command"),
+        }
+    }
+
+    #[test]
+    fn test_parse_client_metrics() {
+        let cli = Cli::parse_from(&["cityhall", "client", "metrics"]);
+
+        match cli.command {
+            Commands::Client { command, .. } => match command {
+                ClientCommand::Metrics { dashboard_addr } => {
+                    assert_eq!(dashboard_addr, "http://127.0.0.1:8080");
+                }
+                _ => panic!("Expected Metrics command"),
+            },
             _ => panic!("Expected Client command"),
         }
     }
