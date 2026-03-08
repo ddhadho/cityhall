@@ -24,10 +24,19 @@ See [BENCHMARKS.md](BENCHMARKS.md) for methodology and raw results.
 
 ---
 
-## Dashboard
+## Monitoring and Observability
 
-CityHall ships with a live observability dashboard — time-series charts for throughput,
-latency percentiles, MemTable size, SSTable count, and Bloom filter effectiveness.
+Cityhall exposes runtime metrics through a monitoring dashboard to help observe internal storage engine behaviour.
+
+Metrics include:
+
+time-series charts for throughput
+- memtable size
+- latency percentiles
+- SSTable count
+- Bloom filter effectiveness
+- compaction activity
+- read latency distribution
 
 ![CityHall Dashboard](docs/dashboard.png)
 
